@@ -1,0 +1,231 @@
+# Voice Clone Studio
+
+A Gradio-based web UI for voice cloning and voice design, powered by [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS).
+
+![Voice Clone Studio](https://img.shields.io/badge/Voice%20Clone%20Studio-Powered%20by%20Qwen3--TTS-blue)
+
+## Features
+
+### Voice Clone
+Clone voices from your own audio samples. Just provide a 3-10 second reference audio with its transcript, and generate new speech in that voice.
+
+- **Voice prompt caching** - First generation processes the sample, subsequent ones are instant
+- **Seed control** - Reproducible results with saved seeds
+- **Metadata tracking** - Each output saves generation info (sample, seed, text)
+
+### Voice Design
+Create voices from natural language descriptions - no audio needed!
+
+- Describe age, gender, emotion, accent, speaking style
+- Generate unique voices matching your description
+
+### Clone Design
+Use your saved voice designs to generate new content with full style control.
+
+1. Save designs you like from Voice Design tab
+2. Load saved designs anytime
+3. Generate new content with consistent voice style
+
+### Custom Voice
+Generate with premium pre-built voices with optional style instructions:
+
+| Speaker | Description | Language |
+|---------|-------------|----------|
+| Vivian | Bright, slightly edgy young female | Chinese |
+| Serena | Warm, gentle young female | Chinese |
+| Uncle_Fu | Seasoned male, low mellow timbre | Chinese |
+| Dylan | Youthful Beijing male, clear natural | Chinese (Beijing) |
+| Eric | Lively Chengdu male, husky brightness | Chinese (Sichuan) |
+| Ryan | Dynamic male, strong rhythmic drive | English |
+| Aiden | Sunny American male, clear midrange | English |
+| Ono_Anna | Playful Japanese female, light nimble | Japanese |
+| Sohee | Warm Korean female, rich emotion | Korean |
+
+- Style instructions supported (emotion, tone, speed)
+- Each speaker works best in native language but supports all
+
+### Conversation
+Create multi-speaker dialogues automatically:
+
+- Write scripts in simple format: `Speaker: Dialogue text`
+- Mix any of the 9 premium speakers
+- Adjustable pause duration between lines
+- Auto-stitches all lines into one audio file
+
+Example script:
+```
+Ryan: Hey, how's it going?
+Vivian: I'm doing great, thanks for asking!
+Aiden: Mind if I join this conversation?
+```
+
+### Prep Samples
+Full audio preparation workspace:
+
+- **Trim** - Use waveform selection to cut audio
+- **Normalize** - Balance audio levels
+- **Convert to Mono** - Ensure single-channel audio
+- **Transcribe** - Whisper-powered automatic transcription
+- **Save as Sample** - One-click sample creation
+
+## Installation
+
+### Prerequisites
+
+- Python 3.12+
+- CUDA-compatible GPU (recommended: 8GB+ VRAM)
+- **SOX** (Sound eXchange) - Required for audio processing
+- [Flash Attention 2](https://github.com/Dao-AILab/flash-attention) (optional but recommended)
+
+#### Installing SOX
+
+**Windows** (choose one):
+```bash
+# Using winget (built into Windows 10/11)
+winget install -e --id ChrisBagwell.SoX
+
+# Using Chocolatey
+choco install sox
+
+# Or download manually from: https://sourceforge.net/projects/sox/files/sox/
+# Add sox.exe location to your PATH
+```
+
+**Linux**:
+```bash
+# Debian/Ubuntu
+sudo apt install sox libsox-dev
+
+# Fedora/RHEL
+sudo dnf install sox sox-devel
+```
+
+**macOS**:
+```bash
+brew install sox
+```
+
+### Setup
+
+1. Clone the repository:
+```bash
+git clone https://github.com/FranckyB/Voice-Clone-Studio.git
+cd Voice-Clone-Studio
+```
+
+2. Create a virtual environment:
+```bash
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# Linux/Mac
+source venv/bin/activate
+```
+
+3. (NVIDIA GPU) Install PyTorch with CUDA support:
+```bash
+pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl/cu130
+```
+
+4. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+5. (Optional) Install Flash Attention 2 for better performance:
+```bash
+# building it from source:
+pip install flash-attn --no-build-isolation
+
+# Or install using a prebuilt wheel, that matches the python version you used.
+# Some can be found here: https://huggingface.co/MonsterMMORPG/Wan_GGUF/tree/main
+
+## Usage
+
+### Launch the UI
+
+```bash
+python voice_clone_studio.py
+```
+
+Or use the batch file (Windows):
+```bash
+launch.bat
+```
+
+The UI will open at `http://127.0.0.1:7860`
+
+### Prepare Voice Samples
+
+1. Go to the **Prep Samples** tab
+2. Upload or record audio (3-10 seconds of clear speech)
+3. Trim and normalize as needed
+4. Transcribe or manually enter the text
+5. Save as a sample with a name
+
+### Clone a Voice
+
+1. Go to the **Voice Clone** tab
+2. Select your sample from the dropdown
+3. Enter the text you want to speak
+4. Click Generate
+
+### Design a Voice
+
+1. Go to the **Voice Design** tab
+2. Enter the text to speak
+3. Describe the voice (e.g., "Young female, warm and friendly, slight British accent")
+4. Click Generate
+
+## Project Structure
+
+```
+Qwen3-TTS-Voice-Clone-Studio/
+├── voice_clone_ui.py      # Main Gradio application
+├── voice_clone.py         # CLI version (optional)
+├── requirements.txt       # Python dependencies
+├── __Launch_UI.bat        # Windows launcher
+├── samples/               # Voice samples (.wav + .txt pairs)
+│   └── example.wav
+│   └── example.txt
+├── output/                # Generated audio outputs
+└── Qwen/                  # Model weights (auto-downloaded)
+```
+
+## Models Used
+
+Each tab lets you choose between model sizes:
+
+| Model | Sizes | Use Case |
+|-------|-------|----------|
+| **Base** | 1.7B, 0.6B | Voice cloning from samples |
+| **CustomVoice** | 1.7B, 0.6B | Premium speakers with style control |
+| **VoiceDesign** | 1.7B only | Voice design from descriptions |
+| **Whisper** | Medium | Audio transcription |
+
+- **1.7B** = Better quality, more expressive
+- **0.6B** = Faster, less VRAM (~4GB vs ~8GB)
+
+Models are automatically downloaded on first use via HuggingFace.
+
+## Tips
+
+- **Reference Audio**: Use clear, noise-free recordings (3-10 seconds)
+- **Transcripts**: Should exactly match what's spoken in the audio
+- **Caching**: Voice prompts are cached - first generation is slow, subsequent ones are fast
+- **Seeds**: Use the same seed to reproduce identical outputs
+
+## License
+
+This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
+
+This project is based on and uses code from:
+- **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** - Apache 2.0 License (Alibaba)
+- **[Gradio](https://gradio.app/)** - Apache 2.0 License
+- **[OpenAI Whisper](https://github.com/openai/whisper)** - MIT License
+
+## Acknowledgments
+
+- [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) by Alibaba
+- [Gradio](https://gradio.app/) for the web UI framework
+- [OpenAI Whisper](https://github.com/openai/whisper) for transcription
