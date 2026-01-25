@@ -122,6 +122,14 @@ def save_config(config):
 # Load config on startup
 _user_config = load_config()
 
+# Check Whisper availability
+try:
+    import whisper
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+    print("⚠ Whisper not available - only VibeVoice ASR will be offered for transcription")
+
 # ============== Model Management ==============
 
 def unload_tts_models():
@@ -304,12 +312,14 @@ def get_whisper_model():
     """Lazy-load the Whisper model."""
     global _whisper_model
 
+    if not WHISPER_AVAILABLE:
+        raise ImportError("Whisper is not available on this system.")
+
     # Unload TTS models before loading ASR
     unload_tts_models()
 
     if _whisper_model is None:
         print("Loading Whisper model...")
-        import whisper
         _whisper_model = whisper.load_model("medium")
         print("Whisper model loaded!")
     return _whisper_model
@@ -1632,8 +1642,14 @@ def transcribe_audio(audio_file, whisper_language, transcribe_model, progress=gr
             result = model.transcribe(audio_file)
 
         else:  # Default to Whisper
+            if not WHISPER_AVAILABLE:
+                return "❌ Whisper not available. Please use VibeVoice ASR instead."
+            
             progress(0.2, desc="Loading Whisper model...")
-            model = get_whisper_model()
+            try:
+                model = get_whisper_model()
+            except ImportError as e:
+                return f"❌ {str(e)}"
 
             progress(0.4, desc="Transcribing with Whisper...")
 
@@ -2477,9 +2493,19 @@ def create_ui():
                                     value=_user_config.get("whisper_language", "Auto-detect"),
                                     label="Language",
                                 )
+                                
+                                # Offer available transcription models
+                                available_models = ['VibeVoice ASR']
+                                if WHISPER_AVAILABLE:
+                                    available_models.insert(0, 'Whisper')
+                                
+                                default_model = _user_config.get("transcribe_model", "Whisper")
+                                if default_model not in available_models:
+                                    default_model = available_models[0]
+                                
                                 transcribe_model = gr.Dropdown(
-                                    choices=['Whisper', 'VibeVoice ASR'],
-                                    value=_user_config.get("transcribe_model", "Whisper"),
+                                    choices=available_models,
+                                    value=default_model,
                                     label="Model",
                                 )
 
