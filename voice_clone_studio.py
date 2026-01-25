@@ -4,7 +4,7 @@ from pathlib import Path
 # Add vendor directories to Python path
 VENDOR_DIR = Path(__file__).parent / "vendor"
 
-# Add vendor to path (contains both 'vibevoice' and 'vibevoice_asr' packages)
+# Add vendor to path (contains both 'vibevoice_tts' and 'vibevoice_asr' packages)
 if str(VENDOR_DIR) not in sys.path:
     sys.path.insert(0, str(VENDOR_DIR))
 
@@ -334,8 +334,17 @@ def get_vibe_voice_model():
             device = "cuda" if torch.cuda.is_available() else "cpu"
             dtype = torch.bfloat16 if device == "cuda" else torch.float32
 
-            # Load processor
-            processor = VibeVoiceASRProcessor.from_pretrained(model_path)
+            # Suppress expected warnings (missing preprocessor_config.json and tokenizer class mismatch)
+            import logging
+            import warnings
+            prev_level = logging.getLogger("transformers.tokenization_utils_base").level
+            logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+                processor = VibeVoiceASRProcessor.from_pretrained(model_path)
+
+            logging.getLogger("transformers.tokenization_utils_base").setLevel(prev_level)
 
             # Load model with flash attention if available
             try:
@@ -483,7 +492,7 @@ def get_vibevoice_tts_model(model_size="1.5B"):
                 # Model automatically downloads from HF if not cached
                 _vibevoice_tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
                     model_path,
-                    dtype=torch.bfloat16,  # Use 'dtype' instead of deprecated 'torch_dtype'
+                    dtype=torch.bfloat16,
                     device_map="cuda:0" if torch.cuda.is_available() else "cpu",
                     attn_implementation="sdpa"  # Use scaled dot-product attention
                 )
@@ -793,7 +802,7 @@ def generate_audio(sample_name, text_to_generate, language, seed, model_selectio
             )
 
             cache_status = "cached" if was_cached else "newly processed"
-            progress(0.4, desc=f"Generating audio ({cache_status} prompt)...")
+            progress(0.6, desc=f"Generating audio ({cache_status} prompt)...")
 
             # Generate using the cached prompt
             wavs, sr = model.generate_voice_clone(
@@ -824,7 +833,7 @@ def generate_audio(sample_name, text_to_generate, language, seed, model_selectio
 
             logging.getLogger("transformers.tokenization_utils_base").setLevel(prev_level)
 
-            progress(0.3, desc="Processing voice sample...")
+            progress(0.5, desc="Processing voice sample...")
 
             # Format script for VibeVoice (single speaker)
             formatted_script = f"Speaker 1: {text_to_generate.strip()}"
@@ -844,7 +853,7 @@ def generate_audio(sample_name, text_to_generate, language, seed, model_selectio
                 if torch.is_tensor(v):
                     inputs[k] = v.to(device)
 
-            progress(0.5, desc="Generating audio...")
+            progress(0.6, desc="Generating audio...")
 
             # Set inference steps
             model.set_ddpm_inference_steps(num_steps=10)
@@ -1115,7 +1124,7 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
 
         # Save
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = OUTPUT_DIR / f"conversation_{timestamp}.wav"
+        output_file = OUTPUT_DIR / f"conversation_qwen3_{timestamp}.wav"
         sf.write(str(output_file), final_audio, sr)
 
         # Save metadata
@@ -1123,7 +1132,7 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
         speakers_used = list(set(s for s, _ in lines))
         metadata = dedent(f"""\
             Generated: {timestamp}
-            Type: Conversation
+            Type: Qwen3-TTS Conversation
             Model: CustomVoice {model_size}
             Language: {language}
             Seed: {seed}
@@ -1180,7 +1189,7 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
         logging.getLogger("transformers.tokenization_utils_base").setLevel(prev_level)
 
         # Parse script to extract speaker labels and map to voice samples
-        progress(0.2, desc="Processing script...")
+        progress(0.3, desc="Processing script...")
 
         # Parse lines - support [Speaker N]:, [N]:, and SpeakerX: formats
         lines = []
@@ -1273,7 +1282,7 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
             if torch.is_tensor(v):
                 inputs[k] = v.to(device)
 
-        progress(0.4, desc="Generating audio (this may take several minutes for long scripts)...")
+        progress(0.6, desc="Generating audio (this may take several minutes for long scripts)...")
 
         # Set inference steps
         model.set_ddpm_inference_steps(num_steps=10)
@@ -1288,7 +1297,7 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
             verbose=False,
         )
 
-        progress(0.9, desc="Saving audio...")
+        progress(0.8, desc="Saving audio...")
 
         # Get generated audio
         if outputs.speech_outputs and outputs.speech_outputs[0] is not None:
@@ -1300,7 +1309,7 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
 
             # Save output
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = OUTPUT_DIR / f"vibevoice_longform_{timestamp}.wav"
+            output_file = OUTPUT_DIR / f"Conversation_vibevoice_{timestamp}.wav"
             sf.write(str(output_file), generated_audio, sr)
 
             # Save metadata
@@ -1308,7 +1317,7 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
             duration = len(generated_audio) / sr
             metadata = dedent(f"""\
                 Generated: {timestamp}
-                Type: VibeVoice Long-Form TTS
+                Type: VibeVoice Conversation
                 Model: VibeVoice-{model_size}
                 CFG Scale: {cfg_scale}
                 Seed: {seed}
@@ -1645,6 +1654,12 @@ def load_existing_sample(sample_name):
             cache_path = get_prompt_cache_path(sample_name)
             cache_status = "⚡ Cached" if cache_path.exists() else "📝 Not cached"
             info = f"Duration: {format_time(duration)} ({duration:.2f}s)\nPrompt: {cache_status}"
+
+            # Add design instructions if this was a Voice Design sample
+            meta = s.get("meta", {})
+            if meta.get("Type") == "Voice Design" and meta.get("Instruct"):
+                info += f"\n\nVoice Design:\n{meta['Instruct']}"
+
             return s["wav_path"], s["ref_text"], info
 
     return None, "", "Sample not found"
@@ -1766,7 +1781,10 @@ def create_ui():
                             lines=3
                         )
 
-                        sample_info = gr.Markdown("")
+                        sample_info = gr.Textbox(
+                            label="Info",
+                            interactive=False
+                        )
 
                     # Right column - Generation (2/3 width)
                     with gr.Column(scale=2):
@@ -1837,6 +1855,12 @@ def create_ui():
                                 info = f"**Info**\n\nDuration: {duration:.2f}s | {cache_status}"
                             except:
                                 info = f"**Info**\n\n{cache_status}"
+
+                            # Add design instructions if this was a Voice Design sample
+                            meta = s.get("meta", {})
+                            if meta.get("Type") == "Voice Design" and meta.get("Instruct"):
+                                info += f"\n\n**Voice Design:**\n{meta['Instruct']}"
+
                             return s["wav_path"], s["ref_text"], info
                     return None, "", ""
 
@@ -2338,9 +2362,6 @@ def create_ui():
                             interactive=False
                         )
 
-                        gr.Markdown("---")
-                        save_status = gr.Textbox(label="Save Status", interactive=False)
-
                     # Right column - Audio editing
                     with gr.Column(scale=2):
                         gr.Markdown("### ✂️ Edit Audio")
@@ -2384,17 +2405,21 @@ def create_ui():
 
                             transcribe_btn = gr.Button("📝 Transcribe Audio", variant="primary")
 
-                        gr.Markdown("---")
+                gr.Markdown("---")
 
-                        with gr.Column():
-                            # Save as new sample
-                            gr.Markdown("### 💾 Save as New Sample")
-                            new_sample_name = gr.Textbox(
-                                label="Sample Name",
-                                placeholder="Enter a name for this voice sample...",
-                                scale=2
-                            )
-                            save_sample_btn = gr.Button("💾 Save Sample", variant="primary")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 💾 Info")
+                        save_status = gr.Textbox(label="Save Status", interactive=False, scale=1)
+                    with gr.Column(scale=2):
+                        # Save as new sample
+                        gr.Markdown("### 💾 Save as New Sample")
+                        new_sample_name = gr.Textbox(
+                            label="Sample Name",
+                            placeholder="Enter a name for this voice sample...",
+                            scale=2
+                        )
+                        save_sample_btn = gr.Button("💾 Save Sample", variant="primary")
 
                 # Load existing sample to editor
                 def load_sample_to_editor(sample_name):
@@ -2429,11 +2454,10 @@ def create_ui():
                     outputs=[existing_sample_audio, existing_sample_text, existing_sample_info]
                 )
 
-                # Refresh preview button
+                # Refresh preview button - refreshes the dropdown list
                 refresh_preview_btn.click(
-                    load_existing_sample,
-                    inputs=[existing_sample_dropdown],
-                    outputs=[existing_sample_audio, existing_sample_text, existing_sample_info]
+                    refresh_samples,
+                    outputs=[existing_sample_dropdown]
                 )
 
                 # Delete sample

@@ -6,9 +6,10 @@ echo.
 echo Select CUDA version for PyTorch:
 echo   1. CUDA 12.1 (recommended for older GPUs, GTX 10-series and newer)
 echo   2. CUDA 12.8 (for newer GPUs)
-echo   3. CUDA 13.0 (latest, for newest GPUs)
+echo   3. CUDA 13.0 (latest, for newest GPUs - default in 10 seconds)
 echo.
-set /p "CUDA_CHOICE=Enter choice (1/2/3): "
+choice /C 123 /T 10 /D 3 /M "Enter choice"
+set CUDA_CHOICE=%errorlevel%
 echo.
 
 REM Check Python version
