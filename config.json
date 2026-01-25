@@ -1,0 +1,10 @@
+{
+  "transcribe_model": "VibeVoice ASR",
+  "tts_base_size": "Large",
+  "custom_voice_size": "Large",
+  "language": "Auto",
+  "conv_pause_duration": 0.5,
+  "whisper_language": "Auto-detect",
+  "conv_model_type": "VibeVoice",
+  "voice_clone_model": "VibeVoice - Small"
+}

@@ -1,28 +1,68 @@
 # Voice Clone Studio
 
-**Version 0.1**
+**Version 0.2**
 
-A Gradio-based web UI for voice cloning and voice design, powered by [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS).
+A Gradio-based web UI for voice cloning and voice design, powered by [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) and [VibeVoice](https://github.com/microsoft/VibeVoice).
+Supports both Whisper or VibeVoice-asr for automatic Transcription.
 
 ![Voice Clone Studio](https://img.shields.io/badge/Voice%20Clone%20Studio-Powered%20by%20Qwen3--TTS-blue)
+![VibeVoice](https://img.shields.io/badge/VibeVoice-Long--Form%20TTS-green)
 
 ## Features
 
 ### Voice Clone
-Clone voices from your own audio samples. Just provide a 3-10 second reference audio with its transcript, and generate new speech in that voice.
+Clone voices from your own audio samples. Just provide a 5-10 second reference audio with its transcript, and generate new speech in that voice.
+**Choose Your Engine:**
+- **Qwen Small/Fast or VibeVoice Small/Fast** - 
 
 - **Voice prompt caching** - First generation processes the sample, subsequent ones are instant
 - **Seed control** - Reproducible results with saved seeds
 - **Metadata tracking** - Each output saves generation info (sample, seed, text)
 
-### Voice Design
-Create voices from natural language descriptions - no audio needed!
+### Conversation
+Create multi-speaker dialogues using either Qwen's premium voices or your own custom voice samples using VibeVoice:
 
-- Describe age, gender, emotion, accent, speaking style
-- Generate unique voices matching your description
+**Choose Your Engine:**
+- **Qwen** - Fast generation with 9 preset voices, optimized for their native languages
+- **VibeVoice** - High-quality custom voices, up to 90 minutes continuous, perfect for podcasts/audiobooks
 
-### Custom Voice
-Generate with premium pre-built voices with optional style instructions:
+**Unified Script Format:**
+Write scripts using `[N]:` format - works seamlessly with both engines:
+```
+[1]: Hey, how's it going?
+[2]: I'm doing great, thanks for asking!
+[3]: Mind if I join this conversation?
+```
+
+**Qwen Mode:**
+- Mix any of the 9 premium speakers
+- Adjustable pause duration between lines
+- Fast generation with cached prompts
+
+**Speaker Mapping:**
+- [1] = Vivian, [2] = Serena, [3] = Uncle_Fu, [4] = Dylan, [5] = Eric
+- [6] = Ryan, [7] = Aiden, [8] = Ono_Anna, [9] = Sohee
+
+**VibeVoice Mode:**
+- **Up to 90 minutes** of continuous speech
+- **Up to 4 distinct speakers** using your own voice samples
+- Cross-lingual support
+- May spontaneously add background music/sounds for realism
+- Numbers beyond 4 wrap around (5→1, 6→2, 7→3, 8→4, etc.)
+
+Perfect for:
+- Podcasts
+- Audiobooks
+- Long-form conversations
+- Multi-speaker narratives
+
+**Models:**
+- **Small** - Faster generation (Qwen: 0.6B, VibeVoice: 1.5B)
+- **Large** - Best quality (Qwen: 1.7B, VibeVoice: Large model)
+
+
+### Voice Presets
+Generate with premium pre-built voices with optional style instructions using Qwen3-TTS Custom Model:
 
 | Speaker | Description | Language |
 |---------|-------------|----------|
@@ -39,23 +79,11 @@ Generate with premium pre-built voices with optional style instructions:
 - Style instructions supported (emotion, tone, speed)
 - Each speaker works best in native language but supports all
 
-### Conversation
-Create multi-speaker dialogues automatically:
+### Voice Design
+Create voices from natural language descriptions - no audio needed, using Qwen3-TTS Voice Design Model:
 
-- Write scripts in simple format: `Speaker: Dialogue text`
-- Mix any of the 9 premium speakers
-- Adjustable pause duration between lines
-- Auto-stitches all lines into one audio file
-
-Example script:
-```
-Ryan: Hey, how's it going?
-Vivian: I'm doing great, thanks for asking!
-Aiden: Mind if I join this conversation?
-```
-
-### Output History
-View, play back, and manage your previously generated audio files.
+- Describe age, gender, emotion, accent, speaking style
+- Generate unique voices matching your description
 
 ### Prep Samples
 Full audio preparation workspace:
@@ -66,6 +94,10 @@ Full audio preparation workspace:
 - **Transcribe** - Whisper-powered automatic transcription
 - **Save as Sample** - One-click sample creation
 
+### Output History
+View, play back, and manage your previously generated audio files.
+
+---
 ## Installation
 
 ### Prerequisites
@@ -75,35 +107,30 @@ Full audio preparation workspace:
 - **SOX** (Sound eXchange) - Required for audio processing
 - [Flash Attention 2](https://github.com/Dao-AILab/flash-attention) (optional but recommended)
 
-#### Installing SOX
-
-**Windows** (choose one):
-```bash
-# Using winget (built into Windows 10/11)
-winget install -e --id ChrisBagwell.SoX
-
-# Using Chocolatey
-choco install sox
-
-# Or download manually from: https://sourceforge.net/projects/sox/files/sox/
-# Add sox.exe location to your PATH
-```
-
-**Linux**:
-```bash
-# Debian/Ubuntu
-sudo apt install sox libsox-dev
-
-# Fedora/RHEL
-sudo dnf install sox sox-devel
-```
-
-**macOS**:
-```bash
-brew install sox
-```
-
 ### Setup
+
+#### Quick Setup (Windows)
+
+1. Clone the repository:
+```bash
+git clone https://github.com/FranckyB/Voice-Clone-Studio.git
+cd Voice-Clone-Studio
+```
+
+2. Run the setup script:
+```bash
+setup.bat
+```
+
+This will automatically:
+- Install SOX (audio processing)
+- Create virtual environment
+- Install PyTorch with CUDA support
+- Install all dependencies
+- Display your Python version
+- Show instructions for optional Flash Attention 2 installation
+
+#### Manual Setup (All Platforms)
 
 1. Clone the repository:
 ```bash
@@ -116,7 +143,7 @@ cd Voice-Clone-Studio
 python -m venv venv
 # Windows
 venv\Scripts\activate
-# Linux/Mac
+# Linux/MacOs
 source venv/bin/activate
 ```
 
@@ -130,13 +157,32 @@ pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl
 pip install -r requirements.txt
 ```
 
-5. (Optional) Install Flash Attention 2 for better performance:
+
+5. Install Sox
+
 ```bash
-# building it from source:
+# Windows
+winget install -e --id ChrisBagwell.SoX
+
+# Linux
+# Debian/Ubuntu
+sudo apt install sox libsox-dev
+# Fedora/RHEL
+sudo dnf install sox sox-devel
+
+# MacOs
+brew install sox
+```
+
+6. (Optional) Install Flash Attention 2 for better performance:
+```bash
+# Option 1 - Build from source (requires C++ compiler):
 pip install flash-attn --no-build-isolation
 
-# Or install using a prebuilt wheel, that matches the python version you used.
-# Some can be found here: https://huggingface.co/MonsterMMORPG/Wan_GGUF/tree/main
+# Option 2 - Use prebuilt wheel (faster, recommended):
+# Download from: https://github.com/bdashore3/flash-attention/releases
+# Then: pip install downloaded-wheel-file.whl
+```
 
 ## Usage
 
@@ -180,14 +226,15 @@ The UI will open at `http://127.0.0.1:7860`
 ```
 Qwen3-TTS-Voice-Clone-Studio/
 ├── voice_clone_ui.py      # Main Gradio application
-├── voice_clone.py         # CLI version (optional)
 ├── requirements.txt       # Python dependencies
 ├── __Launch_UI.bat        # Windows launcher
 ├── samples/               # Voice samples (.wav + .txt pairs)
 │   └── example.wav
 │   └── example.txt
 ├── output/                # Generated audio outputs
-└── Qwen/                  # Model weights (auto-downloaded)
+├── vendor                 # Included Technology
+│   └── vibevoice_asr      # newest version of vibevoice with asr support
+│   └── vibevoice_tts      # prior version of vibevoice with tts support
 ```
 
 ## Models Used
@@ -196,13 +243,14 @@ Each tab lets you choose between model sizes:
 
 | Model | Sizes | Use Case |
 |-------|-------|----------|
-| **Base** | 1.7B, 0.6B | Voice cloning from samples |
-| **CustomVoice** | 1.7B, 0.6B | Premium speakers with style control |
+| **Base** | Small, Large | Voice cloning from samples |
+| **CustomVoice** | Small, Large | Premium speakers with style control |
 | **VoiceDesign** | 1.7B only | Voice design from descriptions |
+| **VibeVoice** | Small, Large | Long-form multi-speaker (up to 90 min) |
 | **Whisper** | Medium | Audio transcription |
 
-- **1.7B** = Better quality, more expressive
-- **0.6B** = Faster, less VRAM (~4GB vs ~8GB)
+- **Small** = Faster, less VRAM (Qwen: 0.6B ~4GB, VibeVoice: 1.5B)
+- **Large** = Better quality, more expressive (Qwen: 1.7B ~8GB, VibeVoice: Large model)
 
 Models are automatically downloaded on first use via HuggingFace.
 
@@ -218,12 +266,14 @@ Models are automatically downloaded on first use via HuggingFace.
 This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
 
 This project is based on and uses code from:
-- **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** - Apache 2.0 License (Alibaba)
-- **[Gradio](https://gradio.app/)** - Apache 2.0 License
+- **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)**    - Apache 2.0 License (Alibaba)
+- **[VibeVoice](https://github.com/microsoft/VibeVoice)** - MIT License
+- **[Gradio](https://gradio.app/)**                       - Apache 2.0 License
 - **[OpenAI Whisper](https://github.com/openai/whisper)** - MIT License
 
 ## Acknowledgments
 
 - [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) by Alibaba
+- [VibeVoice](https://github.com/microsoft/VibeVoice) by Microsoft
 - [Gradio](https://gradio.app/) for the web UI framework
 - [OpenAI Whisper](https://github.com/openai/whisper) for transcription
