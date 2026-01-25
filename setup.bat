@@ -32,7 +32,7 @@ if exist venv (
     echo Virtual environment already exists, skipping...
 ) else (
     python -m venv venv
-    if %errorlevel% neq 0 (
+    if not exist venv (
         echo ERROR: Failed to create virtual environment!
         pause
         exit /b 1
@@ -51,14 +51,78 @@ if %errorlevel% neq 0 (
 )
 echo.
 
-REM Install PyTorch with CUDA support
-echo [5/6] Installing PyTorch with CUDA 13.0 support...
-echo This may take several minutes...
-pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl/cu130
-if %errorlevel% neq 0 (
-    echo ERROR: Failed to install PyTorch!
-    pause
-    exit /b 1
+REM Install PyTorch with appropriate CUDA version
+echo [5/6] Installing PyTorch...
+echo Checking for NVIDIA GPU support...
+nvidia-smi >nul 2>&1
+if %errorlevel% equ 0 (
+    setlocal enabledelayedexpansion
+    echo GPU detected!
+    echo.
+    echo NVIDIA GPU Info:
+    nvidia-smi
+    echo.
+    
+    REM Extract CUDA version from nvidia-smi output
+    for /f "tokens=* usebackq" %%i in (`nvidia-smi ^| findstr /i "cuda version"`) do set CUDA_LINE=%%i
+    
+    REM Parse CUDA version using string replacement
+    REM Remove everything up to and including "CUDA Version: "
+    set CUDA_VERSION=!CUDA_LINE:*CUDA Version: =!
+    REM Take only the first token (version number)
+    for /f "tokens=1" %%i in ("!CUDA_VERSION!") do set CUDA_VERSION=%%i
+    
+    if defined CUDA_VERSION (
+        echo Detected CUDA Version: !CUDA_VERSION!
+        
+        REM Determine which CUDA wheel to use (max cu130)
+        REM Extract major version (everything before the dot)
+        for /f "tokens=1 delims=." %%i in ("!CUDA_VERSION!") do set CUDA_MAJOR=%%i
+        
+        REM Extract minor version (everything after the dot)
+        for /f "tokens=2 delims=." %%i in ("!CUDA_VERSION!") do set CUDA_MINOR=%%i
+        
+        if !CUDA_MAJOR! geq 13 (
+            set CUDA_WHEEL=cu130
+            echo Will use: CUDA 13.0 wheel (detected version is 13.x, capping at max supported)
+        ) else if !CUDA_MAJOR! equ 12 (
+            set CUDA_WHEEL=cu12!CUDA_MINOR!
+            echo Will use: CUDA 12.!CUDA_MINOR! wheel
+        ) else (
+            set CUDA_WHEEL=cu130
+            echo CUDA version too old, will attempt CUDA 13.0
+        )
+    ) else (
+        echo Could not detect CUDA version, will attempt CUDA 13.0
+        set CUDA_WHEEL=cu130
+    )
+    echo.
+    
+    REM Try detected CUDA version first
+    echo Attempting !CUDA_WHEEL! installation...
+    echo This may take several minutes...
+    pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl/!CUDA_WHEEL!
+    if !errorlevel! equ 0 (
+        echo !CUDA_WHEEL! installation successful!
+    ) else (
+        echo !CUDA_WHEEL! failed, trying CPU-only version...
+        pip install torch==2.9.1 torchaudio
+        if !errorlevel! neq 0 (
+            echo ERROR: Failed to install PyTorch!
+            pause
+            exit /b 1
+        )
+    )
+    endlocal
+) else (
+    echo No GPU detected or NVIDIA driver not found, installing CPU-only version...
+    echo This may take several minutes...
+    pip install torch==2.9.1 torchaudio
+    if %errorlevel% neq 0 (
+        echo ERROR: Failed to install PyTorch!
+        pause
+        exit /b 1
+    )
 )
 echo.
 

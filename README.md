@@ -1,6 +1,6 @@
 # Voice Clone Studio
 
-**Version 0.2**
+**Version 0.2.1**
 
 A Gradio-based web UI for voice cloning and voice design, powered by [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) and [VibeVoice](https://github.com/microsoft/VibeVoice).
 Supports both Whisper or VibeVoice-asr for automatic Transcription.

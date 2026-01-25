@@ -1228,6 +1228,9 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
                             lines.append((f"Speaker{num_str}", text, int(num_str)))
                         else:
                             lines.append((speaker, text, None))
+
+        # Build available samples list from provided voice samples
+        available_samples = []
         for i in range(1, 5):  # Speaker1 through Speaker4
             speaker_key = f"Speaker{i}"
             if speaker_key in voice_samples_dict and voice_samples_dict[speaker_key]:
@@ -2193,7 +2196,11 @@ def create_ui():
                     return selection.split(" - ")[0]
 
                 custom_generate_btn.click(
-                    lambda text, lang, speaker_sel, instruct, seed, model_size, progress=gr.Progress(): generate_custom_voice(text, lang, extract_speaker_name(speaker_sel), instruct, seed, model_size, progress),
+                    lambda text, lang, speaker_sel, instruct, seed, model_size, progress=gr.Progress(): generate_custom_voice(
+                        text, lang, extract_speaker_name(speaker_sel), instruct, seed,
+                        "1.7B" if model_size == "Large" else "0.6B",  # Map UI labels to actual model sizes
+                        progress
+                    ),
                     inputs=[custom_text_input, custom_language, custom_speaker_dropdown, custom_instruct_input, custom_seed, custom_model_size],
                     outputs=[custom_output_audio, custom_status]
                 )
@@ -2495,7 +2502,7 @@ def create_ui():
                         scale=20
                     )
                     with gr.Column(scale=0):
-                        load_output_btn = gr.Button("▶️ Play", size="sm")
+                        load_output_btn = gr.Button("▶️ Load", size="sm")
                         refresh_outputs_btn = gr.Button("🔄 Refresh", size="sm")
                         delete_output_btn   = gr.Button("🗑️ Delete", size="sm")
 

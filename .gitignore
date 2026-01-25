@@ -42,6 +42,7 @@ samples/*
 *.wav
 *.mp3
 *.prompt
+config.json
 Qwen/
 
 # Jupyter
