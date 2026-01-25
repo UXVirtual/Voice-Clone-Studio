@@ -716,7 +716,8 @@ def get_output_files():
     if not OUTPUT_DIR.exists():
         return ["(Select a file)"]
     files = sorted(OUTPUT_DIR.glob("*.wav"), key=lambda x: x.stat().st_mtime, reverse=True)
-    return ["(Select a file)"] + [str(f) for f in files]
+    # Return just filenames instead of full paths
+    return ["(Select a file)"] + [f.name for f in files]
 
 
 def get_audio_duration(audio_path):
@@ -1174,19 +1175,19 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
         # Save metadata
         metadata_file = output_file.with_suffix(".txt")
         speakers_used = list(set(s for s, _ in lines))
-        metadata = dedent(f"""\
-            Generated: {timestamp}
-            Type: Qwen3-TTS Conversation
-            Model: CustomVoice {model_size}
-            Language: {language}
-            Seed: {seed}
-            Pause Duration: {pause_duration}s
-            Speakers: {', '.join(speakers_used)}
-            Lines: {len(lines)}
-
-            --- Script ---
-            {conversation_data.strip()}
-            """)
+        metadata = (
+            f"Generated: {timestamp}\n"
+            f"Type: Qwen3-TTS Conversation\n"
+            f"Model: CustomVoice {model_size}\n"
+            f"Language: {language}\n"
+            f"Seed: {seed}\n"
+            f"Pause Duration: {pause_duration}s\n"
+            f"Speakers: {', '.join(speakers_used)}\n"
+            f"Lines: {len(lines)}\n"
+            f"\n"
+            f"--- Script ---\n"
+            f"{conversation_data.strip()}\n"
+        )
         metadata_file.write_text(metadata, encoding="utf-8")
 
         progress(1.0, desc="Done!")
@@ -1362,18 +1363,18 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
             # Save metadata
             metadata_file = output_file.with_suffix(".txt")
             duration = len(generated_audio) / sr
-            metadata = dedent(f"""\
-                Generated: {timestamp}
-                Type: VibeVoice Conversation
-                Model: VibeVoice-{model_size}
-                CFG Scale: {cfg_scale}
-                Seed: {seed}
-                Duration: {duration:.1f}s ({duration / 60:.1f} min)
-                Speakers: {len(voice_samples)}
-
-                --- Script ---
-                {script_text.strip()}
-                """)
+            metadata = (
+                f"Generated: {timestamp}\n"
+                f"Type: VibeVoice Conversation\n"
+                f"Model: VibeVoice-{model_size}\n"
+                f"CFG Scale: {cfg_scale}\n"
+                f"Seed: {seed}\n"
+                f"Duration: {duration:.1f}s ({duration / 60:.1f} min)\n"
+                f"Speakers: {len(voice_samples)}\n"
+                f"\n"
+                f"--- Script ---\n"
+                f"{script_text.strip()}\n"
+            )
             metadata_file.write_text(metadata, encoding="utf-8")
 
             progress(1.0, desc="Done!")
@@ -1519,16 +1520,23 @@ def refresh_outputs():
 
 def load_output_audio(file_path):
     """Load a selected output file for playback and show metadata."""
-    if file_path and file_path != "(Select a file)" and Path(file_path).exists():
-        # Check for metadata file
-        metadata_file = Path(file_path).with_suffix(".txt")
-        if metadata_file.exists():
-            try:
-                metadata = metadata_file.read_text(encoding="utf-8")
-                return file_path, metadata
-            except:
-                pass
-        return file_path, "No metadata available"
+    if file_path and file_path != "(Select a file)":
+        # Convert filename to full path if needed
+        if not Path(file_path).is_absolute():
+            file_path = OUTPUT_DIR / file_path
+        else:
+            file_path = Path(file_path)
+
+        if file_path.exists():
+            # Check for metadata file
+            metadata_file = file_path.with_suffix(".txt")
+            if metadata_file.exists():
+                try:
+                    metadata = metadata_file.read_text(encoding="utf-8")
+                    return str(file_path), metadata
+                except:
+                    pass
+            return str(file_path), "No metadata available"
     return None, ""
 
 
@@ -1879,7 +1887,7 @@ def create_ui():
                 with gr.Row():
                     # Left column - Sample selection (1/3 width)
                     with gr.Column(scale=1):
-                        gr.Markdown("### 🎯 Voice Sample")
+                        gr.Markdown("### Voice Sample")
 
                         sample_choices = get_sample_choices()
                         sample_dropdown = gr.Dropdown(
@@ -1890,8 +1898,8 @@ def create_ui():
                         )
 
                         with gr.Row():
-                            load_sample_btn = gr.Button("▶️ Load", size="sm")
-                            refresh_samples_btn = gr.Button("🔄 Refresh", size="sm")
+                            load_sample_btn = gr.Button("Load", size="sm")
+                            refresh_samples_btn = gr.Button("Refresh", size="sm")
 
                         sample_audio = gr.Audio(
                             label="Sample Preview",
@@ -1913,7 +1921,7 @@ def create_ui():
 
                     # Right column - Generation (2/3 width)
                     with gr.Column(scale=2):
-                        gr.Markdown("### ✍️ Generate Speech")
+                        gr.Markdown("### Generate Speech")
 
                         text_input = gr.Textbox(
                             label="Text to Generate",
@@ -1940,18 +1948,18 @@ def create_ui():
                         clone_model_dropdown = gr.Dropdown(
                             choices=VOICE_CLONE_OPTIONS,
                             value=_user_config.get("voice_clone_model", DEFAULT_VOICE_CLONE_MODEL),
-                            label="🤖 Engine & Model",
+                            label="Engine & Model",
                             info="Choose between Qwen3 (fast, cached prompts) or VibeVoice (high-quality, long-form capable)"
                         )
 
-                        generate_btn = gr.Button("🚀 Generate Audio", variant="primary", size="lg")
-
-                        status_text = gr.Textbox(label="Status", interactive=False)
+                        generate_btn = gr.Button("Generate Audio", variant="primary", size="lg")
 
                         output_audio = gr.Audio(
                             label="Generated Audio",
                             type="filepath"
                         )
+
+                        status_text = gr.Textbox(label="Status", interactive=False)
 
                 # Event handlers for Voice Clone tab
                 def load_selected_sample(sample_name):
@@ -2029,13 +2037,13 @@ def create_ui():
                     conv_model_type = gr.Radio(
                         choices=["Qwen", "VibeVoice"],
                         value=initial_conv_model,
-                        label="🤖 TTS Engine"
+                        label="TTS Engine"
                     )
 
                 with gr.Row():
                     # Left - Script input and model-specific controls
                     with gr.Column(scale=2):
-                        gr.Markdown("### 📝 Conversation Script")
+                        gr.Markdown("### Conversation Script")
 
                         conversation_script = gr.Textbox(
                             label="Script",
@@ -2073,7 +2081,7 @@ def create_ui():
 
                         # VibeVoice voice sample selectors (visible when VibeVoice selected)
                         with gr.Column(visible=not is_qwen_initial) as vibevoice_voices_section:
-                            gr.Markdown("### 🎤 Voice Samples (Up to 4 Speakers)")
+                            gr.Markdown("### Voice Samples (Up to 4 Speakers)")
                             gr.Markdown("**[1]** = Voice Sample 1, **[2]** = Sample 2, etc. Numbers beyond 4 wrap around (5→1, 6→2, etc.)")
 
                             with gr.Row():
@@ -2155,9 +2163,9 @@ def create_ui():
                             info="-1 for random"
                         )
 
-                        conv_generate_btn = gr.Button("🎬 Generate Conversation", variant="primary", size="lg")
+                        conv_generate_btn = gr.Button("Generate Conversation", variant="primary", size="lg")
 
-                        gr.Markdown("### 🔊 Output")
+                        gr.Markdown("### Output")
                         conv_output_audio = gr.Audio(
                             label="Generated Conversation",
                             type="filepath"
@@ -2291,7 +2299,7 @@ def create_ui():
 
                     # Right - Generation
                     with gr.Column(scale=2):
-                        gr.Markdown("### ✍️ Generate Speech")
+                        gr.Markdown("### Generate Speech")
 
                         custom_text_input = gr.Textbox(
                             label="Text to Generate",
@@ -2329,13 +2337,13 @@ def create_ui():
                                 scale=1
                             )
 
-                        custom_generate_btn = gr.Button("🚀 Generate Audio", variant="primary", size="lg")
-                        custom_status = gr.Textbox(label="Status", lines=3, interactive=False)
+                        custom_generate_btn = gr.Button("Generate Audio", variant="primary", size="lg")
 
                         custom_output_audio = gr.Audio(
                             label="Generated Audio",
                             type="filepath"
                         )
+                        custom_status = gr.Textbox(label="Status", lines=3, interactive=False)
 
                 # Custom Voice event handlers
                 def extract_speaker_name(selection):
@@ -2365,7 +2373,7 @@ def create_ui():
 
                 with gr.Row():
                     with gr.Column(scale=2):
-                        gr.Markdown("### ✍️ Create Design")
+                        gr.Markdown("### Create Design")
 
                         design_text_input = gr.Textbox(
                             label="Reference Text",
@@ -2401,11 +2409,11 @@ def create_ui():
                             value=False
                         )
 
-                        design_generate_btn = gr.Button("🎨 Generate Voice", variant="primary", size="lg")
+                        design_generate_btn = gr.Button("Generate Voice", variant="primary", size="lg")
                         design_status = gr.Textbox(label="Status", interactive=False)
 
                     with gr.Column(scale=1):
-                        gr.Markdown("### 🔊 Preview & Save")
+                        gr.Markdown("### Preview & Save")
                         design_output_audio = gr.Audio(
                             label="Generated Audio",
                             type="filepath"
@@ -2420,7 +2428,7 @@ def create_ui():
                             lines=1
                         )
 
-                        design_save_btn = gr.Button("💾 Save Design", variant="secondary")
+                        design_save_btn = gr.Button("Save Design", variant="secondary")
                         design_save_status = gr.Textbox(label="Save Status", interactive=False)
 
                 # Voice Design event handlers
@@ -2464,11 +2472,11 @@ def create_ui():
                         )
 
                         with gr.Row():
-                            preview_sample_btn = gr.Button("🔊 Preview Sample", size="sm")
-                            refresh_preview_btn = gr.Button("🔄 Refresh Preview", size="sm")
-                            load_sample_btn = gr.Button("📂 Load to Editor", size="sm")
-                            clear_cache_btn = gr.Button("🧹 Clear Cache", size="sm")
-                            delete_sample_btn = gr.Button("🗑️ Delete", size="sm", variant="stop")
+                            preview_sample_btn = gr.Button("Preview Sample", size="sm")
+                            refresh_preview_btn = gr.Button("Refresh Preview", size="sm")
+                            load_sample_btn = gr.Button("Load to Editor", size="sm")
+                            clear_cache_btn = gr.Button("Clear Cache", size="sm")
+                            delete_sample_btn = gr.Button("Delete", size="sm", variant="stop")
 
                         existing_sample_audio = gr.Audio(
                             label="Sample Preview",
@@ -2489,7 +2497,7 @@ def create_ui():
 
                     # Right column - Audio/Video editing
                     with gr.Column(scale=2):
-                        gr.Markdown("### ✂️ Edit Audio/Video")
+                        gr.Markdown("### Edit Audio/Video")
 
                         prep_file_input = gr.File(
                             label="Audio or Video File",
@@ -2546,23 +2554,23 @@ def create_ui():
                                     label="Model",
                                 )
 
-                            transcribe_btn = gr.Button("📝 Transcribe Audio", variant="primary")
+                            transcribe_btn = gr.Button("Transcribe Audio", variant="primary")
 
                 gr.Markdown("---")
 
                 with gr.Row():
                     with gr.Column(scale=1):
-                        gr.Markdown("### 💾 Info")
+                        gr.Markdown("### Info")
                         save_status = gr.Textbox(label="Save Status", interactive=False, scale=1)
                     with gr.Column(scale=2):
                         # Save as new sample
-                        gr.Markdown("### 💾 Save as New Sample")
+                        gr.Markdown("### Save as New Sample")
                         new_sample_name = gr.Textbox(
                             label="Sample Name",
                             placeholder="Enter a name for this voice sample...",
                             scale=2
                         )
-                        save_sample_btn = gr.Button("💾 Save Sample", variant="primary")
+                        save_sample_btn = gr.Button("Save Sample", variant="primary")
 
                 # Load existing sample to editor
                 def load_sample_to_editor(sample_name):
@@ -2682,9 +2690,9 @@ def create_ui():
                         scale=20
                     )
                     with gr.Column(scale=0):
-                        load_output_btn = gr.Button("▶️ Load", size="sm")
-                        refresh_outputs_btn = gr.Button("🔄 Refresh", size="sm")
-                        delete_output_btn   = gr.Button("🗑️ Delete", size="sm")
+                        load_output_btn = gr.Button("Load", size="sm")
+                        refresh_outputs_btn = gr.Button("Refresh", size="sm")
+                        delete_output_btn   = gr.Button("Delete", size="sm")
 
                 history_audio = gr.Audio(
                     label="Playback",
@@ -2701,7 +2709,12 @@ def create_ui():
                     if not selected_file or selected_file == "(Select a file)":
                         return gr.update(), gr.update(value=None), gr.update(value="❌ No file selected.")
                     try:
-                        audio_path = Path(selected_file)
+                        # Convert filename to full path if needed
+                        if not Path(selected_file).is_absolute():
+                            audio_path = OUTPUT_DIR / selected_file
+                        else:
+                            audio_path = Path(selected_file)
+
                         txt_path = audio_path.with_suffix(".txt")
                         deleted = []
                         if audio_path.exists():
@@ -2825,7 +2838,7 @@ def create_ui():
         ---
         **Tips:**
         - **Voice Clone**    : Clone from your own audio samples.
-        - **Conversation**   : Create multi-speaker dialogues with with Qwen3-TTS or VibeVoice.
+        - **Conversation**   : Create multi-speaker dialogues with Qwen3-TTS or VibeVoice.
         - **Voice Presets**  : Use Qwen premium pre-built voices with style control (emotion, tone, speed)
         - **Voice Design**   : Create voices from text descriptions, save designs you like.
         - **Prep Samples**   : Trim, clean, and transcribe audio and save as voice samples.
