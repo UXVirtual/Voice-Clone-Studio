@@ -1,12 +1,13 @@
+import os
 import sys
 from pathlib import Path
 
-# Add vendor directories to Python path
-VENDOR_DIR = Path(__file__).parent / "vendor"
+# Add modules directories to Python path
+MODULES_DIR = Path(__file__).parent / "modules"
 
-# Add vendor to path (contains both 'vibevoice_tts' and 'vibevoice_asr' packages)
-if str(VENDOR_DIR) not in sys.path:
-    sys.path.insert(0, str(VENDOR_DIR))
+# Add modules to path (contains both 'vibevoice_tts' and 'vibevoice_asr' packages)
+if str(MODULES_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULES_DIR))
 
 import torch
 import soundfile as sf
@@ -25,9 +26,11 @@ from textwrap import dedent
 SAMPLES_DIR = Path(__file__).parent / "samples"
 OUTPUT_DIR = Path(__file__).parent / "output"
 TEMP_DIR = Path(__file__).parent / "temp"
+DATASETS_DIR = Path(__file__).parent / "datasets"
 CONFIG_FILE = Path(__file__).parent / "config.json"
 SAMPLES_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+DATASETS_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 
 # Clear temp folder on launch
@@ -211,7 +214,7 @@ def get_tts_model(size="1.7B"):
             _tts_model = Qwen3TTSModel.from_pretrained(
                 model_name,
                 device_map="cuda:0",
-                dtype=torch.bfloat16,
+                torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
             )
             print(f"TTS Base model ({size}) loaded with Flash Attention 2!")
@@ -221,7 +224,7 @@ def get_tts_model(size="1.7B"):
                 _tts_model = Qwen3TTSModel.from_pretrained(
                     model_name,
                     device_map="cuda:0",
-                    dtype=torch.bfloat16,
+                    torch_dtype=torch.bfloat16,
                     attn_implementation="sdpa",
                 )
                 print(f"TTS Base model ({size}) loaded with SDPA!")
@@ -246,7 +249,7 @@ def get_voice_design_model():
             _voice_design_model = Qwen3TTSModel.from_pretrained(
                 "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
                 device_map="cuda:0",
-                dtype=torch.bfloat16,
+                torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
             )
             print("VoiceDesign model loaded with Flash Attention 2!")
@@ -256,7 +259,7 @@ def get_voice_design_model():
                 _voice_design_model = Qwen3TTSModel.from_pretrained(
                     "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
                     device_map="cuda:0",
-                    dtype=torch.bfloat16,
+                    torch_dtype=torch.bfloat16,
                     attn_implementation="sdpa",
                 )
                 print("VoiceDesign model loaded with SDPA!")
@@ -288,7 +291,7 @@ def get_custom_voice_model(size="1.7B"):
             _custom_voice_model = Qwen3TTSModel.from_pretrained(
                 model_name,
                 device_map="cuda:0",
-                dtype=torch.bfloat16,
+                torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
             )
             print(f"CustomVoice model ({size}) loaded with Flash Attention 2!")
@@ -298,7 +301,7 @@ def get_custom_voice_model(size="1.7B"):
                 _custom_voice_model = Qwen3TTSModel.from_pretrained(
                     model_name,
                     device_map="cuda:0",
-                    dtype=torch.bfloat16,
+                    torch_dtype=torch.bfloat16,
                     attn_implementation="sdpa",
                 )
                 print(f"CustomVoice model ({size}) loaded with SDPA!")
@@ -467,7 +470,7 @@ def get_vibe_voice_model():
 
         except ImportError as e:
             print(f"❌ VibeVoice ASR not available: {e}")
-            print("Make sure vendor/vibevoice_asr directory exists and contains the vibevoice_asr module.")
+            print("Make sure modules/vibevoice_asr directory exists and contains the vibevoice_asr module.")
             raise e
         except Exception as e:
             print(f"❌ Error loading VibeVoice ASR: {e}")
@@ -511,7 +514,7 @@ def get_vibevoice_tts_model(model_size="1.5B"):
 
         except ImportError as e:
             print(f"❌ VibeVoice TTS not available: {e}")
-            print("Make sure vendor/vibevoice_tts directory exists and contains the vibevoice_tts module.")
+            print("Make sure modules/vibevoice_tts directory exists and contains the vibevoice_tts module.")
             raise e
         except Exception as e:
             print(f"❌ Error loading VibeVoice TTS: {e}")
@@ -1050,6 +1053,74 @@ def generate_custom_voice(text_to_generate, language, speaker, instruct, seed, m
         progress(1.0, desc="Done!")
         instruct_msg = f" with style: {instruct.strip()[:30]}..." if instruct and instruct.strip() else ""
         return str(output_file), f"✅ Audio saved to: {output_file.name}\n🎭 Speaker: {speaker}{instruct_msg}\n{seed_msg} | 🤖 {model_size}"
+
+    except Exception as e:
+        return None, f"❌ Error generating audio: {str(e)}"
+
+
+def generate_with_trained_model(text_to_generate, language, speaker_name, checkpoint_path, instruct, seed, progress=gr.Progress()):
+    """Generate audio using a trained custom voice model checkpoint."""
+    if not text_to_generate or not text_to_generate.strip():
+        return None, "❌ Please enter text to generate."
+
+    try:
+        # Set the seed for reproducibility
+        seed = int(seed) if seed is not None else -1
+        if seed < 0:
+            seed = random.randint(0, 2147483647)
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        seed_msg = f"🎲 Seed: {seed}"
+
+        progress(0.1, desc=f"Loading trained model from {checkpoint_path}...")
+
+        # Load the trained model checkpoint
+        from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
+        model = Qwen3TTSModel.from_pretrained(
+            checkpoint_path,
+            device_map="cuda:0",
+            torch_dtype=torch.bfloat16,
+            attn_implementation="flash_attention_2",
+        )
+
+        progress(0.3, desc="Generating with trained voice...")
+
+        # Call with or without instruct
+        kwargs = {
+            "text": text_to_generate.strip(),
+            "language": language if language != "Auto" else "Auto",
+            "speaker": speaker_name,  # Use the speaker name the model was trained with
+        }
+        if instruct and instruct.strip():
+            kwargs["instruct"] = instruct.strip()
+
+        wavs, sr = model.generate_custom_voice(**kwargs)
+
+        progress(0.8, desc="Saving audio...")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = OUTPUT_DIR / f"trained_{speaker_name}_{timestamp}.wav"
+
+        sf.write(str(output_file), wavs[0], sr)
+
+        # Save metadata file
+        metadata_file = output_file.with_suffix(".txt")
+        metadata = dedent(f"""\
+            Generated: {timestamp}
+            Type: Trained Model
+            Model: {checkpoint_path}
+            Speaker: {speaker_name}
+            Language: {language}
+            Seed: {seed}
+            Instruct: {instruct.strip() if instruct else ''}
+            Text: {text_to_generate.strip()}
+            """)
+        metadata_file.write_text(metadata, encoding="utf-8")
+
+        progress(1.0, desc="Done!")
+        instruct_msg = f" with style: {instruct.strip()[:30]}..." if instruct and instruct.strip() else ""
+        return str(output_file), f"✅ Audio saved to: {output_file.name}\n🎭 Speaker: {speaker_name}{instruct_msg}\n{seed_msg} | 🤖 Trained Model"
 
     except Exception as e:
         return None, f"❌ Error generating audio: {str(e)}"
@@ -1722,6 +1793,130 @@ def transcribe_audio(audio_file, whisper_language, transcribe_model, progress=gr
         return f"❌ Error transcribing: {str(e)}"
 
 
+def batch_transcribe_folder(folder, replace_existing, whisper_language, transcribe_model, progress=gr.Progress()):
+    """Batch transcribe all audio files in a dataset folder."""
+    if not folder or folder == "(No folders)":
+        return "❌ Please select a dataset folder first."
+
+    try:
+        base_dir = DATASETS_DIR / folder
+        if not base_dir.exists():
+            return f"❌ Folder not found: {folder}"
+
+        # Get all audio files
+        audio_files = sorted(list(base_dir.glob("*.wav")) + list(base_dir.glob("*.mp3")))
+
+        if not audio_files:
+            return f"❌ No audio files found in {folder}"
+
+        # Check if there's anything to do BEFORE loading model
+        files_to_process = []
+        for audio_file in audio_files:
+            txt_file = audio_file.with_suffix(".txt")
+            if not txt_file.exists() or replace_existing:
+                files_to_process.append(audio_file)
+
+        if not files_to_process:
+            return f"✅ All {len(audio_files)} files already have transcripts. Check 'Replace existing transcripts' to re-transcribe."
+
+        # Load model once
+        status_log = []
+        status_log.append(f"📁 Batch transcribing folder: {folder}")
+        status_log.append(f"Found {len(audio_files)} audio files ({len(files_to_process)} to process)")
+        status_log.append("")
+
+        if transcribe_model == "VibeVoice ASR":
+            progress(0.05, desc="Loading VibeVoice ASR model...")
+            try:
+                model = get_vibe_voice_model()
+                status_log.append("✅ Loaded VibeVoice ASR model")
+            except Exception as e:
+                return f"❌ VibeVoice ASR not available: {str(e)}"
+        else:
+            if not WHISPER_AVAILABLE:
+                return "❌ Whisper not available. Please use VibeVoice ASR instead."
+
+            progress(0.05, desc="Loading Whisper model...")
+            try:
+                model = get_whisper_model()
+                status_log.append("✅ Loaded Whisper model")
+            except ImportError as e:
+                return f"❌ {str(e)}"
+
+            # Prepare language options
+            options = {}
+            if whisper_language and whisper_language != "Auto-detect":
+                lang_code = {
+                    "English": "en", "Chinese": "zh", "Japanese": "ja",
+                    "Korean": "ko", "German": "de", "French": "fr",
+                    "Russian": "ru", "Portuguese": "pt", "Spanish": "es",
+                    "Italian": "it"
+                }.get(whisper_language, None)
+                if lang_code:
+                    options["language"] = lang_code
+
+        status_log.append("")
+        status_log.append("=" * 60)
+
+        transcribed_count = 0
+        skipped_count = 0
+        error_count = 0
+
+        for i, audio_file in enumerate(audio_files):
+            txt_file = audio_file.with_suffix(".txt")
+
+            # Check if transcript already exists
+            if txt_file.exists() and not replace_existing:
+                status_log.append(f"⏭️  Skipped: {audio_file.name} (transcript exists)")
+                skipped_count += 1
+                continue
+
+            # Update progress
+            progress_val = 0.1 + (0.9 * i / len(audio_files))
+            progress(progress_val, desc=f"Transcribing {i + 1}/{len(audio_files)}: {audio_file.name[:30]}...")
+
+            try:
+                # Transcribe
+                if transcribe_model == "VibeVoice ASR":
+                    result = model.transcribe(str(audio_file))
+                else:
+                    result = model.transcribe(str(audio_file), **options)
+
+                transcription = result["text"].strip()
+
+                # For VibeVoice ASR, remove text in brackets [...] and surrounding colons
+                if transcribe_model == "VibeVoice ASR":
+                    # Remove [text] and any colons that immediately follow
+                    transcription = re.sub(r'\[.*?\]\s*:', '', transcription)  # Remove [ ... ]:
+                    transcription = re.sub(r'\[.*?\]', '', transcription)      # Remove remaining [ ... ]
+                    transcription = ' '.join(transcription.split())  # Clean up extra whitespace
+
+                # Save transcript
+                txt_file.write_text(transcription, encoding="utf-8")
+
+                status_log.append(f"✅ {audio_file.name} → {len(transcription)} chars")
+                transcribed_count += 1
+
+            except Exception as e:
+                status_log.append(f"❌ Error: {audio_file.name} - {str(e)}")
+                error_count += 1
+
+        status_log.append("=" * 60)
+        status_log.append("")
+        status_log.append("📊 Summary:")
+        status_log.append(f"   ✅ Transcribed: {transcribed_count}")
+        status_log.append(f"   ⏭️  Skipped: {skipped_count}")
+        status_log.append(f"   ❌ Errors: {error_count}")
+        status_log.append(f"   📝 Total: {len(audio_files)}")
+
+        progress(1.0, desc="Batch transcription complete!")
+
+        return "\n".join(status_log)
+
+    except Exception as e:
+        return f"❌ Error during batch transcription: {str(e)}"
+
+
 def save_as_sample(audio_file, transcription, sample_name):
     """Save audio and transcription as a new sample."""
     if not audio_file:
@@ -1867,6 +2062,672 @@ def clear_sample_cache(sample_name):
         return f"❌ Error clearing cache: {str(e)}", str(e)
 
 
+# ============== Training Dataset Functions ==============
+
+def get_trained_models():
+    """Get list of trained custom voice models from trained_models directory."""
+    trained_models_dir = Path("trained_models")
+    if not trained_models_dir.exists():
+        return []
+
+    models = []
+    for speaker_dir in trained_models_dir.iterdir():
+        if speaker_dir.is_dir():
+            # Check if there are checkpoint folders
+            checkpoints = list(speaker_dir.glob("checkpoint-epoch-*"))
+            if checkpoints:
+                # Sort by epoch number
+                sorted_checkpoints = sorted(checkpoints, key=lambda x: int(x.name.split("-")[-1]))
+                checkpoint_list = [{"epoch": int(cp.name.split("-")[-1]), "path": str(cp)} for cp in sorted_checkpoints]
+                models.append({
+                    "name": speaker_dir.name,
+                    "checkpoints": checkpoint_list
+                })
+
+    return sorted(models, key=lambda x: x["name"])
+
+
+def get_dataset_folders():
+    """Get list of subfolders in datasets directory."""
+    if not DATASETS_DIR.exists():
+        return ["(No folders)"]
+    folders = sorted([d.name for d in DATASETS_DIR.iterdir() if d.is_dir()])
+    return folders if folders else ["(No folders)"]
+
+
+def get_dataset_files(folder=None):
+    """Get list of audio files in datasets directory or subfolder."""
+    if not DATASETS_DIR.exists():
+        return []
+
+    # Determine the directory to scan
+    if folder and folder != "(No folders)":
+        scan_dir = DATASETS_DIR / folder
+    else:
+        scan_dir = DATASETS_DIR
+
+    if not scan_dir.exists():
+        return []
+
+    audio_files = sorted(
+        list(scan_dir.glob("*.wav")) + list(scan_dir.glob("*.mp3")),
+        key=lambda x: x.stat().st_mtime,
+        reverse=True
+    )
+    return [f.name for f in audio_files]
+
+
+def load_dataset_item(folder, filename):
+    """Load audio file and its transcript (auto-transcribe if missing)."""
+    if not filename:
+        return None, ""
+
+    # Determine the directory
+    if folder and folder != "(No folders)":
+        base_dir = DATASETS_DIR / folder
+    else:
+        base_dir = DATASETS_DIR
+
+    audio_path = base_dir / filename
+    txt_path = audio_path.with_suffix(".txt")
+
+    # Load or create transcript
+    if txt_path.exists():
+        try:
+            transcript = txt_path.read_text(encoding="utf-8")
+        except:
+            transcript = ""
+    else:
+        transcript = ""
+
+    return str(audio_path), transcript
+
+
+def save_dataset_transcript(folder, filename, transcript):
+    """Save transcript for a training dataset audio file."""
+    if not filename or not transcript:
+        return "❌ Filename and transcript required"
+
+    try:
+        # Determine the directory
+        if folder and folder != "(No folders)":
+            base_dir = DATASETS_DIR / folder
+        else:
+            base_dir = DATASETS_DIR
+
+        audio_path = base_dir / filename
+        txt_path = audio_path.with_suffix(".txt")
+        txt_path.write_text(transcript.strip(), encoding="utf-8")
+        return f"✅ Saved transcript for {filename}"
+    except Exception as e:
+        return f"❌ Error saving: {str(e)}"
+
+
+def delete_dataset_item(folder, filename):
+    """Delete both audio and transcript files."""
+    if not filename:
+        return "❌ No file selected", []
+
+    try:
+        # Determine the directory
+        if folder and folder != "(No folders)":
+            base_dir = DATASETS_DIR / folder
+        else:
+            base_dir = DATASETS_DIR
+
+        audio_path = base_dir / filename
+        txt_path = audio_path.with_suffix(".txt")
+
+        deleted = []
+        if audio_path.exists():
+            audio_path.unlink()
+            deleted.append("audio")
+        if txt_path.exists():
+            txt_path.unlink()
+            deleted.append("transcript")
+
+        files = get_dataset_files(folder)
+        msg = f"✅ Deleted {filename} ({', '.join(deleted)})" if deleted else "❌ File not found"
+        return msg, files
+    except Exception as e:
+        return f"❌ Error: {str(e)}", get_dataset_files(folder)
+
+
+def auto_transcribe_finetune(folder, filename, transcribe_model="Whisper", language="Auto-detect", progress=gr.Progress()):
+    """Auto-transcribe a finetune audio file."""
+    if not filename:
+        return "", "❌ No file selected"
+
+    try:
+        # Determine the directory
+        if folder and folder != "(No folders)":
+            base_dir = DATASETS_DIR / folder
+        else:
+            base_dir = DATASETS_DIR
+
+        audio_path = base_dir / filename
+        if not audio_path.exists():
+            return "", "❌ File not found"
+
+        # Use existing transcription logic
+        transcript = transcribe_audio(str(audio_path), language, transcribe_model, progress)
+
+        # Check if transcription failed (starts with ❌)
+        if transcript.startswith("❌"):
+            return "", transcript
+
+        # For VibeVoice ASR, remove text in brackets [...] and surrounding colons
+        if transcribe_model == "VibeVoice ASR":
+            # Remove [text] and any colons that immediately follow
+            transcript = re.sub(r'\[.*?\]\s*:', '', transcript)  # Remove [ ... ]:
+            transcript = re.sub(r'\[.*?\]', '', transcript)      # Remove remaining [ ... ]
+            transcript = ' '.join(transcript.split())  # Clean up extra whitespace
+
+        # Save transcript
+        txt_path = audio_path.with_suffix(".txt")
+        txt_path.write_text(transcript.strip(), encoding="utf-8")
+
+        return transcript, f"✅ Transcribed and saved for {filename}"
+    except Exception as e:
+        return "", f"❌ Transcription failed: {str(e)}"
+
+
+def convert_audio_to_finetune_format(audio_path, progress=gr.Progress()):
+    """Convert audio to 24kHz, 16-bit, mono format required for finetuning."""
+    try:
+        import subprocess
+
+        if not audio_path or not Path(audio_path).exists():
+            return None, "❌ No audio file"
+
+        progress(0.3, desc="Converting with ffmpeg...")
+
+        # Use ffmpeg to convert (already installed)
+        output_path = Path(audio_path)
+        temp_output = output_path.parent / f"temp_{output_path.name}"
+
+        # ffmpeg command: convert to 24kHz, mono, 16-bit PCM
+        cmd = [
+            'ffmpeg', '-y', '-i', str(audio_path),
+            '-ar', '24000',  # 24kHz sample rate
+            '-ac', '1',       # mono
+            '-sample_fmt', 's16',  # 16-bit
+            '-acodec', 'pcm_s16le',  # PCM 16-bit little-endian
+            str(temp_output)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            return None, f"❌ ffmpeg error: {result.stderr}"
+
+        # Replace original with converted
+        if temp_output.exists():
+            output_path.unlink()
+            temp_output.rename(output_path)
+
+        progress(1.0, desc="Done!")
+        return str(output_path), "✅ Converted to 24kHz 16-bit mono"
+    except FileNotFoundError:
+        return None, "❌ ffmpeg not found. Please install ffmpeg"
+    except Exception as e:
+        return None, f"❌ Conversion failed: {str(e)}"
+
+
+def save_trimmed_audio(audio_path, trimmed_audio):
+    """Save trimmed audio, overwriting the original file."""
+    try:
+        if not trimmed_audio:
+            return None, "❌ No audio to save"
+
+        if not audio_path or not Path(audio_path).exists():
+            return None, "❌ Invalid audio path"
+
+        # trimmed_audio is a tuple: (sample_rate, audio_data)
+        sr, audio_data = trimmed_audio
+
+        # Save over the original file
+        output_path = Path(audio_path)
+        sf.write(str(output_path), audio_data, sr, subtype='PCM_16')
+
+        # Return the saved audio data so it updates in the UI
+        return (sr, audio_data), f"✅ Saved trimmed audio to {output_path.name}"
+    except Exception as e:
+        return None, f"❌ Error saving: {str(e)}"
+
+
+def check_audio_format(audio_path):
+    """Check if audio is 24kHz, 16-bit, mono."""
+    try:
+        info = sf.info(audio_path)
+        is_correct = (info.samplerate == 24000 and
+                      info.channels == 1 and
+                      info.subtype == 'PCM_16')
+        return is_correct, info
+    except:
+        return False, None
+
+
+def convert_all_finetune_audio(folder, progress=gr.Progress()):
+    """Convert all audio files that aren't 24kHz 16-bit mono."""
+    try:
+        import subprocess
+
+        files = get_dataset_files(folder)
+        if not files:
+            return "❌ No audio files found in datasets/"
+
+        # Determine the directory
+        if folder and folder != "(No folders)":
+            base_dir = DATASETS_DIR / folder
+        else:
+            base_dir = DATASETS_DIR
+
+        total = len(files)
+        converted = 0
+        skipped = 0
+        errors = []
+
+        for i, filename in enumerate(files):
+            progress((i + 1) / total, desc=f"Checking {filename}...")
+
+            audio_path = base_dir / filename
+
+            # Check if already correct format
+            is_correct, info = check_audio_format(str(audio_path))
+
+            if is_correct:
+                skipped += 1
+                continue
+
+            # Convert
+            progress((i + 1) / total, desc=f"Converting {filename}...")
+            temp_output = audio_path.parent / f"temp_{filename}"
+
+            cmd = [
+                'ffmpeg', '-y', '-i', str(audio_path),
+                '-ar', '24000',
+                '-ac', '1',
+                '-sample_fmt', 's16',
+                '-acodec', 'pcm_s16le',
+                str(temp_output)
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0 and temp_output.exists():
+                audio_path.unlink()
+                temp_output.rename(audio_path)
+                converted += 1
+            else:
+                errors.append(f"{filename}: {result.stderr[:100]}")
+
+        progress(1.0, desc="Done!")
+
+        msg = f"✅ Converted: {converted} | Skipped (already correct): {skipped}"
+        if errors:
+            msg += f"\n❌ Errors: {len(errors)}\n" + "\n".join(errors[:3])
+
+        return msg
+    except FileNotFoundError:
+        return "❌ ffmpeg not found. Please install ffmpeg"
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
+
+# ============== Training Functions ==============
+
+def train_model(folder, speaker_name, ref_audio_filename, model_size, batch_size, learning_rate, num_epochs, progress=gr.Progress()):
+    """Complete training workflow: validate, prepare data, and train model."""
+    import subprocess
+    import json
+    import sys
+
+    # ============== STEP 1: Validation ==============
+    progress(0.0, desc="Step 1/3: Validating dataset...")
+
+    if not folder or folder == "(No folders)" or folder == "(Select Dataset)":
+        return "❌ Please select a dataset folder"
+
+    if not speaker_name or not speaker_name.strip():
+        return "❌ Please enter a speaker name"
+
+    if not ref_audio_filename:
+        return "❌ Please select a reference audio file"
+
+    # Create output directory - use absolute path
+    project_root = Path(__file__).parent
+    output_dir = project_root / "trained_models" / speaker_name.strip()
+    if output_dir.exists():
+        return f"❌ Output folder already exists: {output_dir}\n\nPlease choose a different speaker name or delete the existing folder."
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    base_dir = DATASETS_DIR / folder
+    if not base_dir.exists():
+        return f"❌ Folder not found: {folder}"
+
+    # Reference audio path
+    ref_audio_path = base_dir / ref_audio_filename
+    if not ref_audio_path.exists():
+        return f"❌ Reference audio not found: {ref_audio_filename}"
+
+    # Only get audio files, ignore .txt, .jsonl, etc.
+    audio_files = [f for f in (list(base_dir.glob("*.wav")) + list(base_dir.glob("*.mp3")))
+                   if not f.name.endswith('.txt') and not f.name.endswith('.jsonl')]
+    if not audio_files:
+        return "❌ No audio files found in folder"
+
+    issues = []
+    valid_files = []
+    converted_count = 0
+    total = len(audio_files)
+
+    status_log = []
+    status_log.append("=" * 60)
+    status_log.append("STEP 1/3: DATASET VALIDATION")
+    status_log.append("=" * 60)
+
+    for i, audio_path in enumerate(audio_files):
+        progress(0.0 + (0.2 * (i + 1) / total), desc=f"Validating {audio_path.name}...")
+
+        txt_path = audio_path.with_suffix(".txt")
+
+        # Check if transcript exists
+        if not txt_path.exists():
+            issues.append(f"❌ {audio_path.name}: Missing transcript")
+            continue
+
+        # Check if transcript is not empty
+        try:
+            transcript = txt_path.read_text(encoding="utf-8").strip()
+            if not transcript:
+                issues.append(f"❌ {audio_path.name}: Empty transcript")
+                continue
+        except:
+            issues.append(f"❌ {audio_path.name}: Cannot read transcript")
+            continue
+
+        # Check audio format and convert if needed
+        is_correct, info = check_audio_format(str(audio_path))
+        if not is_correct:
+            if not info:
+                issues.append(f"❌ {audio_path.name}: Cannot read audio file")
+                continue
+
+            # Auto-convert to 24kHz 16-bit mono
+            progress(0.0 + (0.2 * (i + 1) / total), desc=f"Converting {audio_path.name}...")
+            temp_output = audio_path.parent / f"temp_{audio_path.name}"
+            cmd = [
+                'ffmpeg', '-y', '-i', str(audio_path),
+                '-ar', '24000', '-ac', '1', '-sample_fmt', 's16',
+                '-acodec', 'pcm_s16le', str(temp_output)
+            ]
+
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0 and temp_output.exists():
+                    audio_path.unlink()
+                    temp_output.rename(audio_path)
+                    converted_count += 1
+                else:
+                    issues.append(f"❌ {audio_path.name}: Conversion failed - {result.stderr[:100]}")
+                    continue
+            except FileNotFoundError:
+                issues.append(f"❌ {audio_path.name}: ffmpeg not found")
+                continue
+            except Exception as e:
+                issues.append(f"❌ {audio_path.name}: Conversion error - {str(e)[:100]}")
+                continue
+
+        valid_files.append(audio_path.name)
+
+    if not valid_files:
+        return "❌ No valid training samples found\n" + "\n".join(issues[:10])
+
+    status_log.append(f"✅ Found {len(valid_files)} valid training samples")
+    if converted_count > 0:
+        status_log.append(f"✅ Auto-converted {converted_count} files to 24kHz 16-bit mono")
+    if issues:
+        status_log.append(f"⚠️  {len(issues)} files skipped:")
+        for issue in issues[:5]:
+            status_log.append(f"   {issue}")
+        if len(issues) > 5:
+            status_log.append(f"   ... and {len(issues) - 5} more")
+
+    # Ensure reference audio is in correct format
+    progress(0.2, desc="Preparing reference audio...")
+    is_correct, info = check_audio_format(str(ref_audio_path))
+    if not is_correct:
+        temp_output = ref_audio_path.parent / f"temp_{ref_audio_path.name}"
+        cmd = [
+            'ffmpeg', '-y', '-i', str(ref_audio_path),
+            '-ar', '24000', '-ac', '1', '-sample_fmt', 's16',
+            '-acodec', 'pcm_s16le', str(temp_output)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0 and temp_output.exists():
+            ref_audio_path.unlink()
+            temp_output.rename(ref_audio_path)
+        else:
+            return f"❌ Failed to convert reference audio: {result.stderr[:200]}"
+
+    # Generate train_raw.jsonl
+    progress(0.25, desc="Generating train_raw.jsonl...")
+    train_raw_path = base_dir / "train_raw.jsonl"
+    jsonl_entries = []
+
+    for filename in valid_files:
+        audio_path = base_dir / filename
+        txt_path = audio_path.with_suffix(".txt")
+        transcript = txt_path.read_text(encoding="utf-8").strip()
+
+        entry = {
+            "audio": str(audio_path.absolute()),
+            "text": transcript,
+            "ref_audio": str(ref_audio_path.absolute())
+        }
+        jsonl_entries.append(entry)
+
+    try:
+        with open(train_raw_path, 'w', encoding='utf-8') as f:
+            for entry in jsonl_entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        status_log.append(f"✅ Generated train_raw.jsonl with {len(jsonl_entries)} entries")
+    except Exception as e:
+        return f"❌ Failed to write train_raw.jsonl: {str(e)}"
+
+    # ============== STEP 2: Prepare Data (extract audio codes) ==============
+    status_log.append("")
+    status_log.append("=" * 60)
+    status_log.append("STEP 2/3: EXTRACTING AUDIO CODES")
+    status_log.append("=" * 60)
+    progress(0.3, desc="Step 2/3: Extracting audio codes...")
+
+    train_with_codes_path = base_dir / "train_with_codes.jsonl"
+    prepare_script = Path(__file__).parent / "modules" / "Qwen3-TTS" / "finetuning" / "prepare_data.py"
+
+    if not prepare_script.exists():
+        status_log.append("❌ Qwen3-TTS finetuning scripts not found!")
+        status_log.append("   Please ensure Qwen3-TTS repository is cloned.")
+        return "\n".join(status_log)
+
+    # Get venv Python executable
+    venv_python = Path(__file__).parent / "venv" / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        status_log.append("❌ Virtual environment not found!")
+        status_log.append(f"   Expected at: {venv_python}")
+        return "\n".join(status_log)
+
+    prepare_cmd = [
+        str(venv_python),
+        str(prepare_script.absolute()),
+        "--device", "cuda:0",
+        "--tokenizer_model_path", "Qwen/Qwen3-TTS-Tokenizer-12Hz",
+        "--input_jsonl", str(train_raw_path),
+        "--output_jsonl", str(train_with_codes_path)
+    ]
+
+    status_log.append(f"Running: {' '.join(prepare_cmd)}")
+    status_log.append("")
+
+    try:
+        result = subprocess.Popen(
+            prepare_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            cwd=str(base_dir)
+        )
+
+        for line in result.stdout:
+            line = line.strip()
+            if line:
+                status_log.append(f"  {line}")
+
+        result.wait()
+
+        if result.returncode != 0:
+            status_log.append(f"❌ prepare_data.py failed with exit code {result.returncode}")
+            return "\n".join(status_log)
+
+        if not train_with_codes_path.exists():
+            status_log.append("❌ train_with_codes.jsonl was not generated")
+            return "\n".join(status_log)
+
+        status_log.append("")
+        status_log.append("✅ Audio codes extracted successfully")
+
+    except Exception as e:
+        status_log.append(f"❌ Error running prepare_data.py: {str(e)}")
+        return "\n".join(status_log)
+
+    # ============== STEP 3: Fine-tune ==============
+    status_log.append("")
+    status_log.append("=" * 60)
+    status_log.append("STEP 3/3: TRAINING MODEL")
+    status_log.append("=" * 60)
+    progress(0.5, desc="Step 3/3: Training model (this will take a while)...")
+
+    sft_script = Path(__file__).parent / "modules" / "Qwen3-TTS" / "finetuning" / "sft_12hz.py"
+
+    if not sft_script.exists():
+        status_log.append("❌ sft_12hz.py not found!")
+        return "\n".join(status_log)
+
+    # Determine base model path and ensure it's cached
+    if "Large" in model_size or "1.7B" in model_size:
+        base_model_id = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    else:
+        base_model_id = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+
+    # Get the cached model path (downloads if not cached)
+    status_log.append(f"Locating base model: {base_model_id}")
+    try:
+        from huggingface_hub import snapshot_download
+        # This checks cache first, only downloads if missing, then returns cache path
+        base_model_path = snapshot_download(
+            repo_id=base_model_id,
+            allow_patterns=["*.json", "*.safetensors", "*.txt", "*.npz"],
+            local_files_only=False  # Will download if not in cache
+        )
+        status_log.append(f"✅ Using cached model at: {base_model_path}")
+    except Exception as e:
+        status_log.append(f"❌ Failed to locate/download base model: {str(e)}")
+        return "\n".join(status_log)
+
+    sft_cmd = [
+        str(venv_python),
+        str(sft_script.absolute()),
+        "--init_model_path", base_model_path,  # Use local path instead of model ID
+        "--output_model_path", str(output_dir),
+        "--train_jsonl", str(train_with_codes_path),
+        "--batch_size", str(int(batch_size)),
+        "--lr", str(learning_rate),
+        "--num_epochs", str(int(num_epochs)),
+        "--speaker_name", speaker_name.strip()
+    ]
+
+    status_log.append("Training configuration:")
+    status_log.append(f"  Base model: {base_model_id}")
+    status_log.append(f"  Batch size: {int(batch_size)}")
+    status_log.append(f"  Learning rate: {learning_rate}")
+    status_log.append(f"  Epochs: {int(num_epochs)}")
+    status_log.append(f"  Speaker name: {speaker_name.strip()}")
+    status_log.append(f"  Output: {output_dir}")
+    status_log.append("")
+    status_log.append("🚀 Starting training...")
+    status_log.append(f"Running: {' '.join([str(arg) for arg in sft_cmd])}")
+    status_log.append("")
+
+    try:
+        # Set environment variables to suppress warnings
+        env = os.environ.copy()
+        env['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
+        env['TOKENIZERS_PARALLELISM'] = 'false'
+
+        # Capture output in real-time
+        result = subprocess.Popen(
+            sft_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            env=env
+        )
+
+        epoch_count = 0
+        for line in result.stdout:
+            line = line.strip()
+            if line:
+                status_log.append(f"  {line}")
+
+                # Update progress based on epoch indicators
+                if "Epoch" in line and "Step" in line:
+                    try:
+                        # Parse "Epoch 0 | Step 0 | Loss: 19.8072"
+                        epoch_num = int(line.split("Epoch")[1].split("|")[0].strip())
+                        # Progress from 50% to 100% based on epoch
+                        progress_val = 0.5 + (0.5 * (epoch_num + 1) / int(num_epochs))
+                        progress(progress_val, desc=f"Training: {line[:60]}...")
+                    except:
+                        pass
+
+        result.wait()
+
+        if result.returncode != 0:
+            status_log.append("")
+            status_log.append(f"❌ Training failed with exit code {result.returncode}")
+            return "\n".join(status_log)
+
+        status_log.append("")
+        status_log.append("=" * 60)
+        status_log.append("✅ TRAINING COMPLETED SUCCESSFULLY!")
+        status_log.append("=" * 60)
+        status_log.append(f"📁 Model will be saved to: {output_dir}")
+        status_log.append(f"🎤 Speaker name: {speaker_name.strip()}")
+        status_log.append("")
+        status_log.append("Monitor the terminal window for progress.")
+        status_log.append("When training completes, you'll see:")
+        status_log.append(f"  - Checkpoints in: {output_dir}/checkpoint-epoch-N/")
+        status_log.append("")
+        status_log.append("To use your trained model after completion:")
+        status_log.append("  1. Go to Voice Presets tab")
+        status_log.append("  2. Select 'Trained Models' radio button")
+        status_log.append("  3. Click refresh and select '{speaker_name.strip()}'")
+
+        progress(1.0, desc="Training launched in terminal!")
+
+    except Exception as e:
+        status_log.append(f"❌ Error during training: {str(e)}")
+        return "\n".join(status_log)
+
+    return "\n".join(status_log)
+
+
 def create_ui():
     """Create the Gradio interface."""
 
@@ -1959,7 +2820,7 @@ def create_ui():
                             type="filepath"
                         )
 
-                        status_text = gr.Textbox(label="Status", interactive=False)
+                        status_text = gr.Textbox(label="Status", interactive=False, lines=3)
 
                 # Event handlers for Voice Clone tab
                 def load_selected_sample(sample_name):
@@ -2261,41 +3122,107 @@ def create_ui():
             # ============== TAB 3: Custom Voice ==============
             with gr.TabItem("Voice Presets"):
                 gr.Markdown("""
-                ### Generate with Qwen3-TTS Preset Voices
+                ### Generate with Preset or Trained Custom Voices
 
-                Use pre-built premium voices with optional style instructions. These voices models support instruction-based style control (emotion, tone, speed, etc.).
+                Use premium pre-built voices **or** your own trained custom voice models with optional style instructions.
                 """)
 
                 with gr.Row():
                     # Left - Speaker selection
                     with gr.Column(scale=1):
-                        gr.Markdown("### 🎤 Select Speaker")
+                        gr.Markdown("### Select Voice Type")
 
-                        # Create speaker choices with descriptions
-                        speaker_choices = [f"{name} - {desc}" for name, desc in CUSTOM_VOICE_SPEAKERS.items()]
-                        custom_speaker_dropdown = gr.Dropdown(
-                            choices=speaker_choices,
-                            label="Speaker",
-                            info="Choose a premium voice"
+                        voice_type_radio = gr.Radio(
+                            choices=["Premium Speakers", "Trained Models"],
+                            value="Premium Speakers",
+                            label="Voice Source"
                         )
 
-                        gr.Markdown("""
-                        **Available Speakers:**
+                        # Premium speakers dropdown
+                        with gr.Column(visible=True) as premium_section:
+                            speaker_choices = [f"{name} - {desc}" for name, desc in CUSTOM_VOICE_SPEAKERS.items()]
+                            custom_speaker_dropdown = gr.Dropdown(
+                                choices=speaker_choices,
+                                label="Speaker",
+                                info="Choose a premium voice"
+                            )
 
-                        | Speaker | Voice | Language |
-                        |---------|-------|----------|
-                        | Vivian | Bright young female | 🇨🇳 Chinese |
-                        | Serena | Warm gentle female | 🇨🇳 Chinese |
-                        | Uncle_Fu | Seasoned mellow male | 🇨🇳 Chinese |
-                        | Dylan | Youthful Beijing male | 🇨🇳 Chinese |
-                        | Eric | Lively Chengdu male | 🇨🇳 Chinese |
-                        | Ryan | Dynamic male | 🇺🇸 English |
-                        | Aiden | Sunny American male | 🇺🇸 English |
-                        | Ono_Anna | Playful female | 🇯🇵 Japanese |
-                        | Sohee | Warm female | 🇰🇷 Korean |
+                            gr.Markdown("""
+                            **Premium Speakers:**
 
-                        *Tip: Each speaker works best in their native language but can speak any supported language.*
-                        """)
+                            | Speaker | Voice | Language |
+                            |---------|-------|----------|
+                            | Vivian | Bright young female | 🇨🇳 Chinese |
+                            | Serena | Warm gentle female | 🇨🇳 Chinese |
+                            | Uncle_Fu | Seasoned mellow male | 🇨🇳 Chinese |
+                            | Dylan | Youthful Beijing male | 🇨🇳 Chinese |
+                            | Eric | Lively Chengdu male | 🇨🇳 Chinese |
+                            | Ryan | Dynamic male | 🇺🇸 English |
+                            | Aiden | Sunny American male | 🇺🇸 English |
+                            | Ono_Anna | Playful female | 🇯🇵 Japanese |
+                            | Sohee | Warm female | 🇰🇷 Korean |
+
+                            *Each speaker works best in native language.*
+                            """)
+
+                        # Trained models dropdown
+                        with gr.Column(visible=False) as trained_section:
+                            def get_initial_speaker_list():
+                                """Get initial list of trained speakers for dropdown initialization."""
+                                models = get_trained_models()
+                                if not models:
+                                    return ["(No trained models found)"]
+                                # Add placeholder at the beginning
+                                return ["(Select Model)"] + [m['name'] for m in models]
+
+                            def refresh_trained_speakers():
+                                """Refresh both dropdowns - model list and checkpoints."""
+                                models = get_trained_models()
+                                if not models:
+                                    return gr.update(choices=["(No trained models found)"], value="(No trained models found)"), gr.update(choices=[], value=None)
+
+                                # Add placeholder at the beginning
+                                choices = ["(Select Model)"] + [m['name'] for m in models]
+
+                                return gr.update(choices=choices, value="(Select Model)"), gr.update(choices=[], value=None)
+
+                            def get_checkpoint_choices(speaker_name):
+                                """Get checkpoint choices for selected speaker."""
+                                if not speaker_name or speaker_name in ["(No trained models found)", "(Select Model)"]:
+                                    return gr.update(choices=[], value=None)
+
+                                models = get_trained_models()
+                                for model in models:
+                                    if model["name"] == speaker_name:
+                                        choices = [f"Epoch {cp['epoch']}" for cp in model["checkpoints"]]
+                                        # Default to latest (last in list)
+                                        return gr.update(choices=choices, value=choices[-1] if choices else None)
+
+                                return gr.update(choices=[], value=None)
+
+                            trained_speaker_dropdown = gr.Dropdown(
+                                choices=get_initial_speaker_list(),
+                                value="(Select Model)",
+                                label="Trained Model",
+                                info="Select your custom trained voice"
+                            )
+
+                            refresh_trained_btn = gr.Button("🔄 Refresh", size="sm")
+
+                            trained_checkpoint_dropdown = gr.Dropdown(
+                                choices=[],
+                                label="Checkpoint Epoch",
+                                info="Select which training epoch to use (latest is usually best)"
+                            )
+
+                            gr.Markdown("""
+                            **Trained Models:**
+
+                            Custom voices you've trained in the Train Model tab.
+                            Select the model, then choose which checkpoint (epoch) to use.
+
+                            *Tip: Later epochs are usually better trained*
+                            """)
 
                     # Right - Generation
                     with gr.Column(scale=2):
@@ -2350,15 +3277,79 @@ def create_ui():
                     """Extract speaker name from dropdown selection."""
                     if not selection:
                         return None
-                    return selection.split(" - ")[0]
+                    return selection.split(" - ")[0].split(" (")[0]  # Handle both formats
+
+                def toggle_voice_type(voice_type):
+                    """Toggle between premium and trained model sections."""
+                    is_premium = voice_type == "Premium Speakers"
+                    return {
+                        premium_section: gr.update(visible=is_premium),
+                        trained_section: gr.update(visible=not is_premium)
+                    }
+
+                def refresh_trained_models():
+                    """Refresh the list of trained models."""
+                    models = get_trained_models()
+                    if not models:
+                        return gr.update(choices=["(No trained models found)"], value=None)
+                    choices = [f"{m['name']} ({m['checkpoints']} checkpoints)" for m in models]
+                    return gr.update(choices=choices, value=None)
+
+                def generate_with_voice_type(text, lang, speaker_sel, instruct, seed, model_size, voice_type, premium_speaker, trained_speaker, trained_checkpoint, progress=gr.Progress()):
+                    """Generate audio with either premium or trained voice."""
+
+                    if voice_type == "Premium Speakers":
+                        # Use premium speaker with CustomVoice model
+                        speaker = extract_speaker_name(premium_speaker)
+                        if not speaker:
+                            return None, "❌ Please select a premium speaker"
+
+                        return generate_custom_voice(
+                            text, lang, speaker, instruct, seed,
+                            "1.7B" if model_size == "Large" else "0.6B",
+                            progress
+                        )
+                    else:
+                        # Use trained model checkpoint
+                        if not trained_speaker or trained_speaker in ["(No trained models found)", "(Select Model)"]:
+                            return None, "❌ Please select a trained model or train one first"
+
+                        if not trained_checkpoint:
+                            return None, "❌ Please select a checkpoint epoch"
+
+                        # Extract epoch number from checkpoint selection
+                        epoch = int(trained_checkpoint.split(" ")[1])  # "Epoch 2"
+                        checkpoint_path = f"trained_models/{trained_speaker}/checkpoint-epoch-{epoch}"
+
+                        # Generate with trained model
+                        return generate_with_trained_model(
+                            text, lang, trained_speaker, checkpoint_path, instruct, seed, progress
+                        )
+
+                voice_type_radio.change(
+                    toggle_voice_type,
+                    inputs=[voice_type_radio],
+                    outputs=[premium_section, trained_section]
+                )
+
+                trained_speaker_dropdown.change(
+                    get_checkpoint_choices,
+                    inputs=[trained_speaker_dropdown],
+                    outputs=[trained_checkpoint_dropdown]
+                )
+
+                refresh_trained_btn.click(
+                    refresh_trained_speakers,
+                    outputs=[trained_speaker_dropdown, trained_checkpoint_dropdown]
+                )
 
                 custom_generate_btn.click(
-                    lambda text, lang, speaker_sel, instruct, seed, model_size, progress=gr.Progress(): generate_custom_voice(
-                        text, lang, extract_speaker_name(speaker_sel), instruct, seed,
-                        "1.7B" if model_size == "Large" else "0.6B",  # Map UI labels to actual model sizes
-                        progress
-                    ),
-                    inputs=[custom_text_input, custom_language, custom_speaker_dropdown, custom_instruct_input, custom_seed, custom_model_size],
+                    generate_with_voice_type,
+                    inputs=[
+                        custom_text_input, custom_language, custom_speaker_dropdown,
+                        custom_instruct_input, custom_seed, custom_model_size,
+                        voice_type_radio, custom_speaker_dropdown, trained_speaker_dropdown, trained_checkpoint_dropdown
+                    ],
                     outputs=[custom_output_audio, custom_status]
                 )
 
@@ -2461,7 +3452,7 @@ def create_ui():
                 with gr.Row():
                     # Left column - Existing samples browser
                     with gr.Column(scale=1):
-                        gr.Markdown("### 📚 Existing Samples")
+                        gr.Markdown("### Existing Samples")
 
                         existing_sample_choices = get_sample_choices()
                         existing_sample_dropdown = gr.Dropdown(
@@ -2524,7 +3515,7 @@ def create_ui():
                             interactive=False
                         )
                         with gr.Column(scale=2):
-                            gr.Markdown("### 💬 Transcription / Reference Text")
+                            gr.Markdown("### Transcription / Reference Text")
                             transcription_output = gr.Textbox(
                                 label="Text",
                                 lines=4,
@@ -2680,7 +3671,7 @@ def create_ui():
 
                 View, play back, and manage your previously generated audio files.
                 """)
-                gr.Markdown("### 📂 Output History")
+                gr.Markdown("### Output History")
 
                 with gr.Row():
                     output_dropdown = gr.Dropdown(
@@ -2753,6 +3744,413 @@ def create_ui():
                     load_output_audio,
                     inputs=[output_dropdown],
                     outputs=[history_audio, history_metadata]
+                )
+
+            # ============== TAB 7: Finetune Dataset ==============
+            with gr.TabItem("Finetune Dataset"):
+                gr.Markdown("""
+                ### Prepare Data for Qwen3-TTS Finetuning
+
+                Build a dataset for finetuning Qwen3-TTS on custom voices. Add audio files, auto-transcribe them,
+                and export as .txt for training.
+                """)
+
+                with gr.Row():
+                    # Left - File list and management
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Dataset Files")
+
+                        finetune_folder_dropdown = gr.Dropdown(
+                            choices=get_dataset_folders(),
+                            label="Dataset Folder",
+                            info="Subfolders in datasets/",
+                            interactive=True,
+                            value=None
+                        )
+
+                        refresh_folder_btn = gr.Button("Refresh Folders", size="sm")
+
+                        finetune_dropdown = gr.Dropdown(
+                            choices=[],
+                            label="Audio Files",
+                            info="Files in selected folder",
+                            interactive=True
+                        )
+
+                        with gr.Row():
+                            load_finetune_btn = gr.Button("Load", size="sm", scale=1)
+                            refresh_finetune_btn = gr.Button("Refresh", size="sm", scale=1)
+                            delete_finetune_btn = gr.Button("Delete", size="sm", scale=1)
+
+                        finetune_audio_preview = gr.Audio(
+                            label="Audio Preview & Trim",
+                            type="numpy",
+                            interactive=True
+                        )
+
+                        save_trimmed_btn = gr.Button("Save Trimmed Audio", variant="secondary")
+
+                        gr.Markdown("### Transcription Settings")
+
+                        finetune_transcribe_model = gr.Radio(
+                            choices=["Whisper", "VibeVoice ASR"],
+                            value=_user_config.get("transcribe_model", "Whisper"),
+                            label="Transcription Model",
+                            info="Choose transcription engine"
+                        )
+
+                        finetune_transcribe_lang = gr.Dropdown(
+                            choices=["Auto-detect", "English", "Chinese", "Japanese", "Korean",
+                                     "French", "German", "Spanish", "Russian"],
+                            value=_user_config.get("whisper_language", "Auto-detect"),
+                            label="Language (Whisper only)",
+                            visible=(_user_config.get("transcribe_model", "Whisper") == "Whisper")
+                        )
+
+                    # Right - Transcript editor
+                    with gr.Column(scale=2):
+                        gr.Markdown("### Edit Transcript")
+
+                        finetune_transcript = gr.Textbox(
+                            label="Transcript",
+                            placeholder="Load an audio file or auto-transcribe to edit the transcript...",
+                            lines=10,
+                            info="Edit the transcript to match the audio exactly"
+                        )
+
+                        with gr.Row():
+                            auto_transcribe_btn = gr.Button("Auto-Transcribe", variant="primary", scale=1)
+                            save_transcript_btn = gr.Button("Save Transcript", variant="primary", scale=1)
+
+                        finetune_status = gr.Textbox(
+                            label="Status",
+                            interactive=False,
+                            lines=3
+                        )
+
+                        gr.Markdown("---")
+
+                        with gr.Row():
+                            with gr.Column(scale=1):
+                                gr.Markdown("**Batch Transcribe Folder**")
+
+                                batch_replace_existing = gr.Checkbox(
+                                    label="Replace existing transcripts",
+                                    value=False
+                                )
+
+                                batch_status = gr.Textbox(
+                                    label="Batch Status",
+                                    interactive=False,
+                                    lines=3,
+                                    show_label=False,
+                                    placeholder="Results will appear here..."
+                                )
+                                batch_transcribe_btn = gr.Button("🔄 Batch Transcribe", variant="primary", size="lg")
+
+                            gr.Markdown("""
+                            **Instructions:**
+                            1. Create subfolders in `datasets/` to organize different training sets
+                            2. Place audio files in your chosen subfolder
+                            3. Select the subfolder from the Dataset Folder dropdown
+
+                            **Batch Transcription (Left):**
+                            - Configure transcription settings (model and language)
+                            - Check "Replace existing" to re-transcribe all files
+                            - Click "Batch Transcribe" to process all audio files at once
+
+                            **Individual File Editing (Right):**
+                            - Load an audio file from the dropdown
+                            - Trim the audio if needed (use the waveform editor)
+                            - Save trimmed audio if you made changes
+                            - Auto-transcribe or manually type the transcript
+                            - Save the transcript
+
+                            **Format Requirements:**
+                            - Audio: 24kHz, 16-bit, mono WAV (auto-converted during training setup)
+                            - Transcript: Exact text spoken in the audio
+                            - Recommendation: Use the same reference audio for all samples
+
+                            **Next Steps:**
+                            Go to the Train Model tab to prepare your dataset and start training.
+                            """)
+
+                # Event handlers
+                def refresh_folder_list():
+                    """Refresh folder list."""
+                    folders = get_dataset_folders()
+                    return gr.update(choices=folders, value=None)
+
+                def refresh_finetune_list(folder):
+                    """Refresh file list for the current folder."""
+                    files = get_dataset_files(folder)
+                    return gr.update(choices=files, value=None)
+
+                def update_file_list(folder):
+                    """Update file list when folder changes."""
+                    files = get_dataset_files(folder)
+                    return gr.update(choices=files, value=None)
+
+                # When folder changes, update file list
+                finetune_folder_dropdown.change(
+                    update_file_list,
+                    inputs=[finetune_folder_dropdown],
+                    outputs=[finetune_dropdown]
+                )
+
+                refresh_folder_btn.click(
+                    refresh_folder_list,
+                    outputs=[finetune_folder_dropdown]
+                )
+
+                refresh_finetune_btn.click(
+                    refresh_finetune_list,
+                    inputs=[finetune_folder_dropdown],
+                    outputs=[finetune_dropdown]
+                )
+
+                finetune_dropdown.change(
+                    load_dataset_item,
+                    inputs=[finetune_folder_dropdown, finetune_dropdown],
+                    outputs=[finetune_audio_preview, finetune_transcript]
+                )
+
+                load_finetune_btn.click(
+                    load_dataset_item,
+                    inputs=[finetune_folder_dropdown, finetune_dropdown],
+                    outputs=[finetune_audio_preview, finetune_transcript]
+                )
+
+                save_transcript_btn.click(
+                    save_dataset_transcript,
+                    inputs=[finetune_folder_dropdown, finetune_dropdown, finetune_transcript],
+                    outputs=[finetune_status]
+                )
+
+                delete_finetune_btn.click(
+                    delete_dataset_item,
+                    inputs=[finetune_folder_dropdown, finetune_dropdown],
+                    outputs=[finetune_status, finetune_dropdown]
+                )
+
+                auto_transcribe_btn.click(
+                    auto_transcribe_finetune,
+                    inputs=[finetune_folder_dropdown, finetune_dropdown, finetune_transcribe_model, finetune_transcribe_lang],
+                    outputs=[finetune_transcript, finetune_status]
+                )
+
+                batch_transcribe_btn.click(
+                    batch_transcribe_folder,
+                    inputs=[finetune_folder_dropdown, batch_replace_existing, finetune_transcribe_lang, finetune_transcribe_model],
+                    outputs=[batch_status]
+                )
+
+                def save_and_reload(folder, filename, audio):
+                    """Save trimmed audio, then return values to refresh and reload."""
+                    # Determine the directory
+                    if folder and folder != "(No folders)":
+                        base_dir = DATASETS_DIR / folder
+                    else:
+                        base_dir = DATASETS_DIR
+
+                    # Save the audio
+                    saved_audio, status = save_trimmed_audio(str(base_dir / filename) if filename else None, audio)
+
+                    # Return: clear audio, status, and filename to preserve for reload
+                    return None, status, filename
+
+                save_trimmed_event = save_trimmed_btn.click(
+                    save_and_reload,
+                    inputs=[finetune_folder_dropdown, finetune_dropdown, finetune_audio_preview],
+                    outputs=[finetune_audio_preview, finetune_status, finetune_dropdown]
+                )
+
+                # After saving, reload the same file
+                save_trimmed_event.then(
+                    load_dataset_item,
+                    inputs=[finetune_folder_dropdown, finetune_dropdown],
+                    outputs=[finetune_audio_preview, finetune_transcript]
+                )
+
+                # Toggle language dropdown based on transcribe model
+                def toggle_language_dropdown(model):
+                    return gr.update(visible=(model == "Whisper"))
+
+                finetune_transcribe_model.change(
+                    toggle_language_dropdown,
+                    inputs=[finetune_transcribe_model],
+                    outputs=[finetune_transcribe_lang]
+                )
+
+                # Save finetune transcription preferences
+                finetune_transcribe_model.change(
+                    lambda x: save_preference("transcribe_model", x),
+                    inputs=[finetune_transcribe_model],
+                    outputs=[]
+                )
+
+                finetune_transcribe_lang.change(
+                    lambda x: save_preference("whisper_language", x),
+                    inputs=[finetune_transcribe_lang],
+                    outputs=[]
+                )
+
+            # ============== TAB 8: Train Model ==============
+            with gr.TabItem("Train Model"):
+                gr.Markdown("""
+                ### Fine-tune Qwen3-TTS on Your Custom Voice
+
+                Train a custom voice model on your prepared dataset. This process will:
+                1. Validate your dataset and auto-convert audio files to 24kHz
+                2. Extract audio codes using Qwen3-TTS-Tokenizer
+                3. Fine-tune the base model on your voice data
+
+                **Note:** Training requires CUDA GPU and can take 10+ minutes depending on dataset size and epochs.
+                """)
+
+                with gr.Row():
+                    # Left column - Dataset selection and validation
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Dataset Selection")
+
+                        train_folder_dropdown = gr.Dropdown(
+                            choices=["(Select Dataset)"] + get_dataset_folders(),
+                            value="(Select Dataset)",
+                            label="Training Dataset",
+                            info="Select prepared subfolder",
+                            interactive=True
+                        )
+
+                        refresh_train_folder_btn = gr.Button("Refresh Datasets", size="sm")
+
+                        gr.Markdown("### Model Configuration")
+
+                        speaker_name_input = gr.Textbox(
+                            label="Speaker Name",
+                            value="custom_speaker",
+                            info="Name for the trained voice model",
+                            interactive=True
+                        )
+
+                        gr.Markdown("### Select Reference")
+
+                        ref_audio_dropdown = gr.Dropdown(
+                            choices=[],
+                            label="Reference Audio",
+                            info="Select one sample from your dataset as reference",
+                            interactive=True
+                        )
+
+                        ref_audio_preview = gr.Audio(
+                            label="Preview",
+                            type="filepath",
+                            interactive=False
+                        )
+
+                        start_training_btn = gr.Button("🚀 Start Training", variant="primary", size="lg")
+
+                    # Right column - Training configuration
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Training Parameters")
+
+                        model_size_radio = gr.Radio(
+                            choices=["1.7B (Large)", "0.6B (Small)"],
+                            value="1.7B (Large)",
+                            label="Base Model Size",
+                            info="Larger model = better quality, slower training"
+                        )
+
+                        batch_size_slider = gr.Slider(
+                            minimum=1,
+                            maximum=8,
+                            value=2,
+                            step=1,
+                            label="Batch Size",
+                            info="Reduce if you get out of memory errors"
+                        )
+
+                        learning_rate_slider = gr.Slider(
+                            minimum=1e-6,
+                            maximum=1e-4,
+                            value=2e-5,
+                            label="Learning Rate",
+                            info="Default: 2e-5"
+                        )
+
+                        num_epochs_slider = gr.Slider(
+                            minimum=1,
+                            maximum=10,
+                            value=3,
+                            step=1,
+                            label="Number of Epochs",
+                            info="How many times to train on the full dataset"
+                        )
+
+                        training_status = gr.Textbox(
+                            label="Status",
+                            lines=20,
+                            interactive=False
+                        )
+
+                        gr.Markdown("""
+                        **Usage:**
+                        1. Select your prepared dataset folder (50-100 audio clips recommended)
+                        2. Enter a unique speaker name for your trained model
+                        3. Select a reference audio (5-10 seconds, clear quality)
+                        4. Configure training parameters (defaults work well)
+                        5. Click "Start Training" and wait for completion
+
+                        **After Training:**
+                        Your model will be saved in `trained_models/{speaker_name}/`
+
+                        Use it with:
+                        Voice Presets tab > Trained Models > Select Speaker Name
+                        """)
+
+                # Event handlers for training tab
+                def update_ref_audio_dropdown(folder):
+                    """Update reference audio dropdown when folder changes."""
+                    files = get_dataset_files(folder)
+                    return gr.update(choices=files, value=None), None
+
+                def load_ref_audio_preview(folder, filename):
+                    """Load reference audio preview."""
+                    if not folder or not filename or folder == "(No folders)" or folder == "(Select Dataset)":
+                        return None
+                    audio_path = DATASETS_DIR / folder / filename
+                    if audio_path.exists():
+                        return str(audio_path)
+                    return None
+
+                train_folder_dropdown.change(
+                    update_ref_audio_dropdown,
+                    inputs=[train_folder_dropdown],
+                    outputs=[ref_audio_dropdown, ref_audio_preview]
+                )
+
+                refresh_train_folder_btn.click(
+                    lambda: gr.update(choices=["(Select Dataset)"] + get_dataset_folders(), value="(Select Dataset)"),
+                    outputs=[train_folder_dropdown]
+                )
+
+                ref_audio_dropdown.change(
+                    load_ref_audio_preview,
+                    inputs=[train_folder_dropdown, ref_audio_dropdown],
+                    outputs=[ref_audio_preview]
+                )
+
+                start_training_btn.click(
+                    train_model,
+                    inputs=[
+                        train_folder_dropdown,
+                        speaker_name_input,
+                        ref_audio_dropdown,
+                        model_size_radio,
+                        batch_size_slider,
+                        learning_rate_slider,
+                        num_epochs_slider
+                    ],
+                    outputs=[training_status]
                 )
 
         # ============== Config Auto-Save ==============
@@ -2837,12 +4235,13 @@ def create_ui():
         gr.Markdown("""
         ---
         **Tips:**
-        - **Voice Clone**    : Clone from your own audio samples.
-        - **Conversation**   : Create multi-speaker dialogues with Qwen3-TTS or VibeVoice.
-        - **Voice Presets**  : Use Qwen premium pre-built voices with style control (emotion, tone, speed)
-        - **Voice Design**   : Create voices from text descriptions, save designs you like.
-        - **Prep Samples**   : Trim, clean, and transcribe audio and save as voice samples.
-        - **Output History** : Browse, play, and manage your generated audio files.
+        - **Voice Clone**      : Clone from your own audio samples.
+        - **Conversation**     : Create multi-speaker dialogues with Qwen3-TTS or VibeVoice.
+        - **Voice Presets**    : Use Qwen premium pre-built voices with style control (emotion, tone, speed)
+        - **Voice Design**     : Create voices from text descriptions, save designs you like.
+        - **Prep Samples**     : Trim, clean, and transcribe audio and save as voice samples.
+        - **Output History**   : Browse, play, and manage your generated audio files.
+        - **Finetune Dataset** : Prepare training data for finetuning Qwen3-TTS on custom voices.
         - ⚡ **Voice prompts are cached!** First generation processes the sample, subsequent ones are faster
         - 💾 **Your preferences are auto-saved!** Model choices persist across sessions
         """)

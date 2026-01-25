@@ -39,6 +39,8 @@ start_venv.bat
 output/*
 temp/*
 samples/*
+datasets/*
+trained_models/*
 *.wav
 *.mp3
 *.prompt

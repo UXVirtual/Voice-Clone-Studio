@@ -83,13 +83,37 @@ Create voices from natural language descriptions - no audio needed, using Qwen3-
 - Describe age, gender, emotion, accent, speaking style
 - Generate unique voices matching your description
 
+### Train Custom Voices
+Fine-tune your own custom voice models with your training data:
+
+- **Dataset Management** - Organize training samples in the `datasets/` folder
+- **Audio Preparation** - Auto-converts to 24kHz 16-bit mono format
+- **Training Pipeline** - Complete 3-step workflow (validation → extract codes → train)
+- **Epoch Selection** - Compare different training checkpoints
+- **Live Progress** - Real-time training logs and loss monitoring
+- **Voice Presets Integration** - Use trained models alongside premium speakers
+
+**Requirements:**
+- CUDA GPU required
+- Multiple audio samples with transcripts
+- Training time: ~10-30 minutes depending on dataset size
+
+**Workflow:**
+1. Prepare audio files (WAV/MP3) and organize in `datasets/YourSpeakerName/` folder
+2. Use **Batch Transcribe** to automatically transcribe all files at once
+3. Review and edit individual transcripts as needed
+4. Configure training parameters (model size, epochs, learning rate)
+5. Monitor training progress in real-time
+6. Use trained model in Voice Presets tab
+
 ### Prep Samples
 Full audio preparation workspace:
 
 - **Trim** - Use waveform selection to cut audio
 - **Normalize** - Balance audio levels
 - **Convert to Mono** - Ensure single-channel audio
-- **Transcribe** - Whisper-powered automatic transcription
+- **Transcribe** - Whisper or VibeVoice ASR automatic transcription
+- **Batch Transcribe** - Process entire folders of audio files at once
 - **Save as Sample** - One-click sample creation
 
 ### Output History
@@ -295,6 +319,18 @@ This project is based on and uses code from:
 
 
 ## Versions
+
+**Version 0.4.0** - Custom Voice Training
+- Added **Train Model** tab for fine-tuning custom voices
+- Complete training pipeline with validation, data preparation, and model training
+- **Batch Transcription** - Process 50-100+ audio files in one click
+- Support for both 0.6B and 1.7B base models
+- Real-time training progress monitoring with live loss values
+- Checkpoint management - compare different training epochs
+- Integration with Voice Presets tab for using trained models
+- Dataset organization system with `datasets/` folder structure
+- Automatic audio format conversion (24kHz 16-bit mono)
+- Training progress tracking and error handling
 
 **Version 0.3.5** - Style Instructions
 - Added Style Instructions support in Conversation for Qwen model. (Unsupported by VibeVoice)
