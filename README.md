@@ -225,6 +225,15 @@ pip install flash-attn --no-build-isolation
      ```
    - The application will be accessible at `http://127.0.0.1:7860`.
 
+### Running Tests (Docker)
+
+To verify the installation and features (like the DeepFilterNet denoiser), runs the integration tests inside the container:
+
+```powershell
+# Run the Denoiser Integration Test
+docker-compose exec voice-clone-studio python tests/integration_test_denoiser.py
+```
+
 ## Usage
 
 ### Launch the UI
