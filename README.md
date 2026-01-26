@@ -83,6 +83,11 @@ Create voices from natural language descriptions - no audio needed, using Qwen3-
 - Describe age, gender, emotion, accent, speaking style
 - Generate unique voices matching your description
 
+### Fine-tuning
+Create a dedicated model checkpoint for a specific voice to improve stability and likeness.
+- **Single-speaker training** - Fine-tunes Qwen3-TTS on your specific sample.
+- **Auto-integration** - Fine-tuned voices automatically appear in the Conversation tab as new speakers.
+
 ### Prep Samples
 Full audio preparation workspace:
 
@@ -271,6 +276,14 @@ The UI will open at `http://127.0.0.1:7860`
 3. Describe the voice (e.g., "Young female, warm and friendly, slight British accent")
 4. Click Generate
 
+### Fine-tune a Voice
+
+1. Go to the **Fine-tune** tab
+2. Select a prepared sample from the dropdown (ensure it has a valid transcription)
+3. (Optional) Adjust training epochs or batch size in Advanced Settings
+4. Click **Start Fine-tuning**
+5. Once complete, your new voice will be available in the **Conversation** tab (starting at speaker #10)
+
 ## Project Structure
 
 ```
@@ -303,6 +316,10 @@ Each tab lets you choose between model sizes:
 - **Large** = Better quality, more expressive (Qwen: 1.7B ~8GB, VibeVoice: Large model)
 
 Models are automatically downloaded on first use via HuggingFace.
+
+## Limitations
+
+> Since the control capability of the 12Hz base model is relatively unstable, the Qwen3-TTS base model [does not currently support instruct](https://github.com/QwenLM/Qwen3-TTS/issues/25#issuecomment-3797751920). In the future, the developers of this model will release a 25Hz voice editing model, which will support both cloning and instruct.
 
 ## Tips
 

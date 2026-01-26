@@ -54,3 +54,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Qwen3-TTS Fine-tuned Models
+finetuned_models/*

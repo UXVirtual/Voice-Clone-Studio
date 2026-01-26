@@ -53,10 +53,12 @@ except ImportError as e:
 SAMPLES_DIR = Path(__file__).parent / "samples"
 OUTPUT_DIR = Path(__file__).parent / "output"
 TEMP_DIR = Path(__file__).parent / "temp"
+FINETUNED_MODELS_DIR = Path(__file__).parent / "finetuned_models"
 CONFIG_FILE = Path(__file__).parent / "config.json"
 SAMPLES_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
+FINETUNED_MODELS_DIR.mkdir(exist_ok=True)
 
 # Clear temp folder on launch
 for f in TEMP_DIR.iterdir():
@@ -115,6 +117,22 @@ CUSTOM_VOICE_SPEAKERS = {
     "Ono_Anna": "Playful Japanese female voice, light and nimble (Japanese)",
     "Sohee": "Warm Korean female voice with rich emotion (Korean)"
 }
+
+def load_finetuned_speakers():
+    """Load fine-tuned speakers from local directory."""
+    if not FINETUNED_MODELS_DIR.exists():
+        return
+        
+    for model_dir in FINETUNED_MODELS_DIR.iterdir():
+        if model_dir.is_dir():
+            # Check if it has config.json and model.safetensors
+            if (model_dir / "config.json").exists() and (model_dir / "model.safetensors").exists():
+                 name = model_dir.name
+                 if name not in CUSTOM_VOICE_SPEAKERS:
+                     CUSTOM_VOICE_SPEAKERS[name] = f"Fine-tuned Qwen3-TTS model: {name}"
+
+# Load fine-tuned speakers on startup
+load_finetuned_speakers()
 
 # ============== Configuration Management ==============
 
@@ -333,23 +351,31 @@ def get_voice_design_model():
     return _voice_design_model
 
 
-def get_custom_voice_model(size="1.7B"):
-    """Lazy-load the CustomVoice model."""
+
+def get_custom_voice_model(size_or_path="1.7B"):
+    """Lazy-load the CustomVoice model or a Fine-Tuned model."""
     global _custom_voice_model, _custom_voice_model_size
 
     # Unload ASR models before loading TTS
     unload_asr_models()
 
-    # If we need a different size, unload current model
-    if _custom_voice_model is not None and _custom_voice_model_size != size:
-        print(f"Switching CustomVoice model from {_custom_voice_model_size} to {size}...")
+    target_id = size_or_path
+    is_path = "/" in str(target_id) or "\\" in str(target_id)
+
+    # If we need a different size/path, unload current model
+    if _custom_voice_model is not None and _custom_voice_model_size != target_id:
+        print(f"Switching CustomVoice model from {_custom_voice_model_size} to {target_id}...")
         del _custom_voice_model
         _custom_voice_model = None
         torch.cuda.empty_cache()
 
     if _custom_voice_model is None:
-        model_name = f"Qwen/Qwen3-TTS-12Hz-{size}-CustomVoice"
-        print(f"Loading {model_name}...")
+        if is_path:
+             model_name = str(target_id)
+             print(f"Loading Fine-Tuned Model from {model_name}...")
+        else:
+             model_name = f"Qwen/Qwen3-TTS-12Hz-{target_id}-CustomVoice"
+             print(f"Loading {model_name}...")
 
         # Try flash_attention_2 first, fall back to sdpa if not available
         try:
@@ -359,7 +385,7 @@ def get_custom_voice_model(size="1.7B"):
                 dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
             )
-            print(f"CustomVoice model ({size}) loaded with Flash Attention 2!")
+            print(f"CustomVoice model ({target_id}) loaded with Flash Attention 2!")
         except Exception as e:
             if "flash" in str(e).lower():
                 print("Flash Attention 2 not available, using SDPA instead...")
@@ -369,10 +395,10 @@ def get_custom_voice_model(size="1.7B"):
                     dtype=torch.bfloat16,
                     attn_implementation="sdpa",
                 )
-                print(f"CustomVoice model ({size}) loaded with SDPA!")
+                print(f"CustomVoice model ({target_id}) loaded with SDPA!")
             else:
                 raise e
-        _custom_voice_model_size = size
+        _custom_voice_model_size = target_id
     return _custom_voice_model
 
 
@@ -1123,6 +1149,54 @@ def generate_custom_voice(text_to_generate, language, speaker, instruct, seed, m
         return None, f"❌ Error generating audio: {str(e)}"
 
 
+def resolve_speaker_from_config(model_path, requested_speaker):
+    """Resolve the correct internal speaker name from a model config."""
+    p = Path(model_path)
+    if not p.exists():
+        return requested_speaker
+    
+    config_path = p / "config.json"
+    if not config_path.exists():
+        # Sometimes structure is deeper or parallel, but standard finetune has config.json
+        return requested_speaker
+        
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            
+        talker_config = config.get("talker_config", {})
+        if not talker_config:
+            return requested_speaker
+            
+        valid_speakers = list(talker_config.keys())
+        if not valid_speakers:
+            return requested_speaker
+            
+        # 1. Exact match
+        if requested_speaker in valid_speakers:
+            return requested_speaker
+            
+        # 2. Case-insensitive match & cleanup
+        req_clean = requested_speaker.lower().replace("_tuned", "")
+        
+        for s in valid_speakers:
+            s_lower = s.lower()
+            if s_lower == requested_speaker.lower():
+                return s
+            if s_lower == req_clean:
+                return s
+                
+        # 3. If single speaker model, default to it
+        if len(valid_speakers) == 1:
+            return valid_speakers[0]
+            
+        return requested_speaker
+        
+    except Exception as e:
+        print(f"Warning: Failed to resolve speaker from config: {e}")
+        return requested_speaker
+
+
 def generate_conversation(conversation_data, pause_duration, language, seed, model_size="1.7B", progress=gr.Progress()):
     """Generate a multi-speaker conversation from structured data.
 
@@ -1192,15 +1266,35 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-        progress(0.1, desc=f"Loading CustomVoice model ({model_size})...")
-        model = get_custom_voice_model(model_size)
-
         # Generate all lines
         all_wavs = []
-        sr = None
+        sr = 24000
+        
+        PRIMITIVE_SPEAKERS = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
 
         for i, (speaker, text) in enumerate(lines):
             progress_val = 0.1 + (0.8 * i / len(lines))
+            
+            # Determine which model to use for this speaker
+            target_model_id = model_size
+            if speaker not in PRIMITIVE_SPEAKERS:
+                 # Check for fine-tuned model path
+                 possible_paths = [
+                     FINETUNED_MODELS_DIR / f"{speaker}_tuned",
+                     FINETUNED_MODELS_DIR / speaker
+                 ]
+                 for d in possible_paths:
+                      if d.exists():
+                           checkpoints = sorted([sd for sd in d.iterdir() if sd.is_dir() and "checkpoint" in sd.name], key=lambda x: x.stat().st_mtime)
+                           if checkpoints:
+                                target_model_id = str(checkpoints[-1])
+                           else:
+                                if (d / "model.safetensors").exists():
+                                     target_model_id = str(d)
+                           break
+
+            # Switch Model if needed
+            model = get_custom_voice_model(target_model_id)
 
             # Extract style instructions from parentheses
             clean_text, style_instruct = extract_style_instructions(text)
@@ -1535,6 +1629,365 @@ def generate_design_then_clone(design_text, design_instruct, clone_text, languag
 
     except Exception as e:
         return None, None, f"❌ Error: {str(e)}"
+
+
+def run_finetuning(sample_name, num_epochs, batch_size, lr, model_size, progress=gr.Progress()):
+    """Run fine-tuning process for a selected sample."""
+    if not sample_name:
+        return "❌ Please select a voice sample first."
+
+    # Look for the sample
+    samples = get_available_samples()
+    sample = next((s for s in samples if s["name"] == sample_name), None)
+    
+    if not sample:
+        return f"❌ Sample '{sample_name}' not found."
+    
+    # Paths
+    wav_path = sample["wav_path"]
+    ref_text = sample.get("meta", {}).get("Text") or sample.get("ref_text", "")
+    
+    # Try to load if missing in dict but present in file
+    if not ref_text:
+        try:
+             with open(sample["json_path"], 'r', encoding='utf-8') as f:
+                 meta = json.load(f)
+                 ref_text = meta.get("Text")
+        except:
+             pass
+    
+    if not ref_text:
+        return "❌ Sample has no reference text."
+        
+    finetune_folder = VENDOR_DIR / "qwen3_tts"
+    scripts_py = sys.executable
+
+    # Prepare temp jsonl
+    raw_jsonl_path = TEMP_DIR / "train_raw.jsonl"
+    train_jsonl_path = TEMP_DIR / "train_with_codes.jsonl"
+    output_model_dir = FINETUNED_MODELS_DIR / f"{sample_name}_tuned"
+    
+    # 1. Create Raw JSONL
+    try:
+        data = {
+            "audio": wav_path,
+            "text": ref_text,
+            "ref_audio": wav_path 
+        }
+        with open(raw_jsonl_path, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(data, ensure_ascii=False) + '\n')
+    except Exception as e:
+        return f"❌ Failed to create training data: {e}"
+
+    # 2. Extract Codes (prepare_data.py)
+    progress(0.1, desc="Extracting audio codes...")
+    
+    cmd_prep = [
+        scripts_py, 
+        str(finetune_folder / "scripts/prepare_data.py"),
+        "--input_jsonl", str(raw_jsonl_path),
+        "--output_jsonl", str(train_jsonl_path),
+        "--device", "cuda:0" if torch.cuda.is_available() else "cpu"
+    ]
+    
+    try:
+        result = subprocess.run(cmd_prep, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(result.stderr)
+            return f"❌ Data preparation failed:\n{result.stderr}"
+    except Exception as e:
+        return f"❌ Error running prepare_data: {e}"
+
+    # 3. Training (sft_12hz.py)
+    progress(0.3, desc=f"Fine-tuning Qwen3-TTS ({num_epochs} epochs)...")
+    
+    # Determine base model correctly
+    init_model = "Qwen/Qwen3-TTS-12Hz-1.7B-Base" if "1.7B" in model_size or "Large" in model_size else "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    
+    cmd_train = [
+        scripts_py, "-u", # Unbuffered output
+        str(finetune_folder / "scripts/sft_12hz.py"),
+        "--init_model_path", init_model,
+        "--output_model_path", str(output_model_dir),
+        "--train_jsonl", str(train_jsonl_path),
+        "--batch_size", str(int(batch_size)),
+        "--lr", str(lr),
+        "--num_epochs", str(int(num_epochs)),
+        "--speaker_name", sample_name
+    ]
+    
+    try:
+        # Use Popen to capture text output in real-time
+        process = subprocess.Popen(
+            cmd_train,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            encoding='utf-8' # Force UTF-8 for reading
+        )
+        
+        steps_per_epoch = 1  # default fallback
+        current_epoch_idx = 0
+        total_epochs_count = int(num_epochs)
+
+        print("\n=== Fine-Tuning Log Start ===")
+        for line in process.stdout:
+            # Echo to console
+            print(line, end="")
+            
+            line_str = line.strip()
+            # Parse custom info
+            if "TRAIN_INFO: steps_per_epoch=" in line_str:
+                try:
+                    steps_per_epoch = int(line_str.split("=")[1])
+                except: pass
+            
+            # Parse progress: "Epoch 0 | Step 10 | Loss: 3.2541"
+            # Since sft_12hz.py might print every 10 steps, we update progress accordingly
+            if "Epoch" in line_str and "Step" in line_str and "|" in line_str:
+                try:
+                    parts = line_str.split("|")
+                    ep_str = parts[0].strip()   # Epoch X
+                    step_str = parts[1].strip() # Step Y
+                    
+                    e_val = int(ep_str.split()[1])
+                    s_val = int(step_str.split()[1])
+                    
+                    current_epoch_idx = e_val
+                    
+                    # Calculate overall completion (0.0 to 1.0 within training phase)
+                    # Global step = e_val * steps_per_epoch + s_val
+                    total_global_steps = total_epochs_count * steps_per_epoch
+                    current_global_step = e_val * steps_per_epoch + s_val
+                    
+                    completion = current_global_step / max(total_global_steps, 1)
+                    if completion > 1.0: completion = 1.0
+                    
+                    # Map 0.0-1.0 to 0.3-1.0 in UI
+                    ui_val = 0.3 + (completion * 0.7)
+                    
+                    progress(ui_val, desc=f"Training: Epoch {e_val+1}/{total_epochs_count} (Step {s_val}/{steps_per_epoch})")
+                    
+                except Exception:
+                    pass
+
+        # Wait for finish
+        process.wait()
+        print("\n=== Fine-Tuning Log End ===")
+        
+        if process.returncode != 0:
+            return f"❌ Training failed with exit code {process.returncode}. Please check the console log for details."
+            
+    except Exception as e:
+        return f"❌ Error running training: {e}"
+
+    progress(1.0, desc="Done!")
+    
+    # Reload speakers
+    load_finetuned_speakers()
+    
+    # Look for last checkpoint to confirm
+    checkpoints = sorted([d for d in output_model_dir.iterdir() if d.is_dir() and "checkpoint" in d.name], key=lambda x: x.stat().st_mtime)
+    
+    msg = f"✅ Fine-tuning complete! Created {len(checkpoints)} checkpoints."
+    if checkpoints:
+         msg += "\nUse the 'Checkpoint Management' section below to preview and select the best epoch."
+    
+    return msg
+
+
+def get_training_checkpoints(sample_name):
+    """Get list of available checkpoints for a sample."""
+    if not sample_name:
+        return []
+    
+    tuned_dir = FINETUNED_MODELS_DIR / f"{sample_name}_tuned"
+    if not tuned_dir.exists():
+        return []
+        
+    checkpoints = [d.name for d in tuned_dir.iterdir() if d.is_dir() and "checkpoint" in d.name]
+    
+    # Sort by epoch number
+    def get_epoch_num(name):
+        try:
+            parts = name.split('-') # checkpoint-epoch-10
+            if parts[-1].isdigit():
+                return int(parts[-1])
+            if parts[-2] == "epoch" and parts[-1].isdigit():
+                return int(parts[-1])
+            return 9999
+        except:
+            return 9999
+
+    return sorted(checkpoints, key=get_epoch_num)
+
+def _repair_checkpoint_config(checkpoint_path):
+    """Ensure speaker keys in config.json are lowercase (required by Qwen3-TTS)."""
+    config_path = checkpoint_path / "config.json"
+    if not config_path.exists():
+        return
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        modified = False
+        if "talker_config" in config and isinstance(config["talker_config"], dict):
+            spk_id = config["talker_config"].get("spk_id", {})
+            new_spk_id = {}
+            for k, v in spk_id.items():
+                if k != k.lower():
+                    new_spk_id[k.lower()] = v
+                    modified = True
+                else:
+                    new_spk_id[k] = v
+            
+            if modified:
+                config["talker_config"]["spk_id"] = new_spk_id
+                
+                # Also fix dialect map
+                spk_is_dialect = config["talker_config"].get("spk_is_dialect", {})
+                new_dialect = {}
+                for k, v in spk_is_dialect.items():
+                    if k != k.lower():
+                        new_dialect[k.lower()] = v
+                    else:
+                        new_dialect[k] = v
+                config["talker_config"]["spk_is_dialect"] = new_dialect
+                
+                print(f"Repairing config at {config_path}: Lowercasing speaker keys")
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                    
+    except Exception as e:
+        print(f"Warning: Failed to repair config at {config_path}: {e}")
+
+def preview_checkpoint(sample_name, checkpoint_name, text, seed):
+    """Generate audio using a specific fine-tuning checkpoint."""
+    if not sample_name or not checkpoint_name:
+        return None, "❌ Select a checkpoint first."
+        
+    checkpoint_path = FINETUNED_MODELS_DIR / f"{sample_name}_tuned" / checkpoint_name
+    
+    if not checkpoint_path.exists():
+        return None, f"❌ Checkpoint not found: {checkpoint_path}"
+        
+    # Attempt to repair config if needed (fix speaker name casing)
+    _repair_checkpoint_config(checkpoint_path)
+
+    try:
+        # Load model directly from checkpoint path
+        model = get_custom_voice_model(str(checkpoint_path)) 
+        
+        torch.manual_seed(int(seed) if seed else 42)
+        
+        # Determine valid speaker ID - for single-speaker fine-tunes it's often the sample name or mapped in config
+        # But get_custom_voice_model with path loads it as a generic model
+        # The finetuned model has speaker config inside.
+        # We can pass "Reference" or "Speaker 0" or let the model handle defaults.
+        # Qwen3TTSModel usually needs a speaker name that exists in the config.
+        # Our training script sets speaker_name = sample_name.
+        speaker_name = sample_name
+        
+        wavs, sr = model.generate_custom_voice(
+            text=text,
+            language="Auto",
+            speaker=speaker_name 
+        )
+        
+        # Save temp
+        timestamp = datetime.now().strftime("%H%M%S")
+        out_file = TEMP_DIR / f"preview_{sample_name}_chk_{timestamp}.wav"
+        sf.write(str(out_file), wavs[0], sr)
+        
+        return str(out_file), f"✅ Preview generated from {checkpoint_name}"
+    except Exception as e:
+        return None, f"❌ Preview failed: {e}\n(Tip: Ensure speaker name matches training)"
+
+def finalize_checkpoint(sample_name, checkpoint_name, cleanup):
+    """Promote a checkpoint to be the active fine-tuned model."""
+    if not sample_name or not checkpoint_name:
+        return "❌ Select a checkpoint first."
+        
+    tuned_dir = FINETUNED_MODELS_DIR / f"{sample_name}_tuned"
+    source_dir = tuned_dir / checkpoint_name
+    
+    if not source_dir.exists():
+        return f"❌ Checkpoint source not found: {source_dir}"
+        
+    # Attempt to repair config if needed
+    _repair_checkpoint_config(source_dir)
+
+    try:
+        # Determine strict compatible folder name from config
+        target_folder_name = f"{sample_name}_tuned"
+        config_path = source_dir / "config.json"
+        if config_path.exists():
+             try:
+                 with open(config_path, 'r', encoding='utf-8') as f:
+                     config = json.load(f)
+                 talker_config = config.get("talker_config", {})
+                 # If only one speaker, use that name as folder name
+                 if len(talker_config) == 1:
+                     target_folder_name = list(talker_config.keys())[0]
+             except Exception as e:
+                 print(f"Warning: Could not read speaker name from config: {e}")
+
+        # Ensure target directory exists
+        # We might be renaming the project essentially
+        target_dir = FINETUNED_MODELS_DIR / target_folder_name
+        
+        # If the target directory allows, ensure it's clean or just overwrite root files
+        target_dir.mkdir(exist_ok=True)
+
+        files_moved = []
+        for item in source_dir.iterdir():
+             dest = target_dir / item.name
+             if item.is_file():
+                 shutil.copy2(item, dest)
+                 files_moved.append(item.name)
+             elif item.is_dir():
+                 if dest.exists():
+                     shutil.rmtree(dest)
+                 shutil.copytree(item, dest)
+                 files_moved.append(item.name + "/")
+
+        msg = f"✅ Checkpoint {checkpoint_name} promoted to main model."
+        
+        if cleanup:
+            try:
+                # Remove the original tuned folder if we moved to a new name
+                original_tuned_dir = FINETUNED_MODELS_DIR / f"{sample_name}_tuned"
+                
+                # Check if we moved to a different folder
+                if original_tuned_dir.exists() and original_tuned_dir.resolve() != target_dir.resolve():
+                    shutil.rmtree(original_tuned_dir)
+                else:
+                    # If we stayed in same folder, just remove checkpoints
+                    count = 0
+                    for item in target_dir.iterdir():
+                        if item.is_dir() and "checkpoint" in item.name:
+                            shutil.rmtree(item)
+                            count += 1
+                    if count:
+                        msg += f"\n🗑️ Cleanup: Removed {count} checkpoint folders."
+
+            except Exception as cleanup_error:
+                print(f"Cleanup warning: {cleanup_error}")
+            
+        # Force unload to refresh
+        global _custom_voice_model
+        _custom_voice_model = None
+        torch.cuda.empty_cache()
+        
+        # Reload speakers registry
+        load_finetuned_speakers()
+        
+        return msg
+        
+    except Exception as e:
+        return f"❌ Finalize failed: {e}"
 
 
 def save_designed_voice(audio_file, name, instruct, language, seed, ref_text):
@@ -1977,6 +2430,48 @@ def clear_sample_cache(sample_name):
         return f"❌ Error clearing cache: {str(e)}", str(e)
 
 
+def get_speaker_table_markdown():
+    """Generate markdown table for available speakers including fine-tuned ones."""
+    base_md = """
+    **Qwen Speaker Numbers → Preset Voices:**
+
+    | # | Speaker | Voice | Language |
+    |---|---------|-------|----------|
+    | 1 | Vivian | Bright young female | 🇨🇳 Chinese |
+    | 2 | Serena | Warm gentle female | 🇨🇳 Chinese |
+    | 3 | Uncle_Fu | Seasoned mellow male | 🇨🇳 Chinese |
+    | 4 | Dylan | Youthful Beijing male | 🇨🇳 Chinese |
+    | 5 | Eric | Lively Chengdu male | 🇨🇳 Chinese |
+    | 6 | Ryan | Dynamic male | 🇺🇸 English |
+    | 7 | Aiden | Sunny American male | 🇺🇸 English |
+    | 8 | Ono_Anna | Playful female | 🇯🇵 Japanese |
+    | 9 | Sohee | Warm female | 🇰🇷 Korean |
+    """
+    
+    # Add fine-tuned
+    finetuned = []
+    primitive_keys = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
+    
+    idx = 10
+    for name in CUSTOM_VOICE_SPEAKERS:
+        if name not in primitive_keys:
+            finetuned.append(f"| {idx} | {name} | Fine-tuned Model | Custom |")
+            idx += 1
+            
+    if finetuned:
+        base_md += "\n" + "\n".join(finetuned)
+        
+    base_md += "\n\n*Each speaker works best in their native language.*"
+    return base_md
+
+def get_custom_speaker_choices():
+    return [f"{name} - {desc}" for name, desc in CUSTOM_VOICE_SPEAKERS.items()]
+
+def refresh_speakers_ui():
+    """Reload speakers and returns updated UI components."""
+    load_finetuned_speakers()
+    return get_speaker_table_markdown(), gr.update(choices=get_custom_speaker_choices())
+
 def create_ui():
     """Create the Gradio interface."""
 
@@ -2171,23 +2666,12 @@ def create_ui():
                         )
 
                         # Qwen speaker mapping (visible when Qwen selected)
-                        qwen_speaker_table = gr.Markdown("""
-                        **Qwen Speaker Numbers → Preset Voices:**
-
-                        | # | Speaker | Voice | Language |
-                        |---|---------|-------|----------|
-                        | 1 | Vivian | Bright young female | 🇨🇳 Chinese |
-                        | 2 | Serena | Warm gentle female | 🇨🇳 Chinese |
-                        | 3 | Uncle_Fu | Seasoned mellow male | 🇨🇳 Chinese |
-                        | 4 | Dylan | Youthful Beijing male | 🇨🇳 Chinese |
-                        | 5 | Eric | Lively Chengdu male | 🇨🇳 Chinese |
-                        | 6 | Ryan | Dynamic male | 🇺🇸 English |
-                        | 7 | Aiden | Sunny American male | 🇺🇸 English |
-                        | 8 | Ono_Anna | Playful female | 🇯🇵 Japanese |
-                        | 9 | Sohee | Warm female | 🇰🇷 Korean |
-
-                        *Each speaker works best in their native language.*
-                        """, visible=is_qwen_initial)
+                        with gr.Column(visible=is_qwen_initial) as qwen_speaker_col:
+                            with gr.Row(): 
+                                gr.Markdown("### Available Speakers")
+                                refresh_spk_btn = gr.Button("🔄 Refresh", size="sm")
+                            
+                            qwen_speaker_table = gr.Markdown(get_speaker_table_markdown())
 
                         # VibeVoice voice sample selectors (visible when VibeVoice selected)
                         with gr.Column(visible=not is_qwen_initial) as vibevoice_voices_section:
@@ -2286,7 +2770,7 @@ def create_ui():
                         qwen_tips = gr.Markdown("""
                         **Qwen Tips:**
                         - Fast generation with preset voices
-                        - Up to 9 different speakers
+                        - Up to 9 preset speakers + fine-tuned ones
                         - Each voice optimized for their native language
                         """, visible=is_qwen_initial)
 
@@ -2365,9 +2849,9 @@ def create_ui():
                 conv_model_type.change(
                     toggle_conv_ui,
                     inputs=[conv_model_type],
-                    outputs=[qwen_speaker_table, vibevoice_voices_section, qwen_settings, vibevoice_settings, qwen_tips, vibevoice_tips]
+                    outputs=[qwen_speaker_col, vibevoice_voices_section, qwen_settings, vibevoice_settings, qwen_tips, vibevoice_tips]
                 )
-
+                
             # ============== TAB 3: Custom Voice ==============
             with gr.TabItem("Voice Presets"):
                 gr.Markdown("""
@@ -2382,11 +2866,18 @@ def create_ui():
                         gr.Markdown("### 🎤 Select Speaker")
 
                         # Create speaker choices with descriptions
-                        speaker_choices = [f"{name} - {desc}" for name, desc in CUSTOM_VOICE_SPEAKERS.items()]
-                        custom_speaker_dropdown = gr.Dropdown(
-                            choices=speaker_choices,
-                            label="Speaker",
-                            info="Choose a premium voice"
+                        with gr.Row():
+                             custom_speaker_dropdown = gr.Dropdown(
+                                choices=get_custom_speaker_choices(),
+                                label="Speaker",
+                                info="Choose a premium voice",
+                                scale=3
+                             )
+                             refresh_presets_btn = gr.Button("🔄", size="sm", scale=0)
+
+                        refresh_presets_btn.click(
+                            refresh_speakers_ui,
+                            outputs=[qwen_speaker_table, custom_speaker_dropdown]
                         )
 
                         gr.Markdown("""
@@ -2559,7 +3050,117 @@ def create_ui():
                     outputs=[design_save_status]
                 )
 
-            # ============== TAB 5: Prep Samples ==============
+            # ============== TAB 5: Fine-tune ==============
+            with gr.TabItem("Fine-tune"):
+                gr.Markdown("""
+                ### Fine-tune Qwen3-TTS
+                
+                Create a permanent fine-tuned model from a sample. This is recommended to improve quality and stability for a specific voice.
+                """)
+                
+                # Logic to pre-calculate values for better UX on reload
+                ft_choices = get_sample_choices()
+                ft_val = ft_choices[0] if ft_choices else None
+                
+                ft_cps = get_training_checkpoints(ft_val) if ft_val else []
+                ft_cp_val = ft_cps[-1] if ft_cps else None
+                
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        ft_sample_dropdown = gr.Dropdown(
+                            choices=ft_choices,
+                            value=ft_val,
+                            label="Select Voice Sample",
+                            info="Choose a sample to fine-tune on."
+                        )
+                        refresh_ft_btn = gr.Button("Refresh Samples", size="sm")
+
+                        ft_model_size_radio = gr.Radio(
+                            choices=["Small (0.6B)", "Large (1.7B)"],
+                            value="Large (1.7B)",
+                            label="Base Model Size"
+                        )
+                        
+                        with gr.Accordion("Advanced Settings", open=False):
+                            ft_epochs = gr.Number(value=10, label="Epochs", precision=0)
+                            ft_batch_size = gr.Number(value=2, label="Batch Size", precision=0)
+                            ft_lr = gr.Number(value=2e-5, label="Learning Rate")
+
+                        ft_start_btn = gr.Button("Start Fine-tuning", variant="primary")
+
+                        gr.Markdown("---")
+                        gr.Markdown("### 🏁 Checkpoint Management")
+                        
+                        ft_checkpoints_dropdown = gr.Dropdown(
+                            choices=ft_cps,
+                            value=ft_cp_val,
+                            label="Available Checkpoints",
+                            info="Select an epoch to test.",
+                            interactive=True
+                        )
+                        refresh_cp_btn = gr.Button("Refresh Checkpoints", size="sm")
+
+                        ft_preview_text = gr.Textbox(
+                            label="Preview Text",
+                            value="This is a test of the fine-tuned voice.",
+                            lines=1
+                        )
+                        ft_preview_btn = gr.Button("Preview Audio", size="sm")
+                        ft_preview_audio = gr.Audio(label="Checkpoint Preview", interactive=False)
+                        ft_preview_status = gr.Textbox(label="Preview Status", lines=1)
+
+                        gr.Markdown("#### Finalize")
+                        ft_cleanup_chk = gr.Checkbox(label="Delete other checkpoints after finalizing", value=True)
+                        ft_finalize_btn = gr.Button("Use This Checkpoint", variant="secondary")
+                        ft_final_status = gr.Textbox(label="Finalization Status", lines=2)
+
+                    with gr.Column(scale=1):
+                         ft_status_box = gr.Textbox(label="Status / Output", lines=20, interactive=False)
+                
+                refresh_ft_btn.click(
+                    lambda: gr.update(choices=get_sample_choices()),
+                    outputs=[ft_sample_dropdown]
+                )
+
+                def update_cp_dropdown(sample):
+                     chex = get_training_checkpoints(sample)
+                     return gr.update(choices=chex, value=chex[-1] if chex else None)
+                
+                ft_sample_dropdown.change(
+                    update_cp_dropdown,
+                    inputs=[ft_sample_dropdown],
+                    outputs=[ft_checkpoints_dropdown]
+                )
+
+                refresh_cp_btn.click(
+                    update_cp_dropdown,
+                    inputs=[ft_sample_dropdown],
+                    outputs=[ft_checkpoints_dropdown]
+                )
+                
+                ft_start_btn.click(
+                    run_finetuning,
+                    inputs=[ft_sample_dropdown, ft_epochs, ft_batch_size, ft_lr, ft_model_size_radio],
+                    outputs=[ft_status_box]
+                ).success(
+                    update_cp_dropdown,
+                    inputs=[ft_sample_dropdown],
+                    outputs=[ft_checkpoints_dropdown]
+                )
+
+                ft_preview_btn.click(
+                    lambda s, c, t: preview_checkpoint(s, c, t, -1),
+                    inputs=[ft_sample_dropdown, ft_checkpoints_dropdown, ft_preview_text],
+                    outputs=[ft_preview_audio, ft_preview_status]
+                )
+
+                ft_finalize_btn.click(
+                    finalize_checkpoint,
+                    inputs=[ft_sample_dropdown, ft_checkpoints_dropdown, ft_cleanup_chk],
+                    outputs=[ft_final_status]
+                )
+
+            # ============== TAB 6: Prep Samples ==============
             with gr.TabItem("Prep Samples"):
                 gr.Markdown("""
                 ### Prepare Voice Samples
@@ -2877,6 +3478,13 @@ def create_ui():
                 )
 
         # ============== Config Auto-Save ==============
+        # Cross-Tab Event Handlers
+        # We define this here to ensure all components (like custom_speaker_dropdown) are defined
+        refresh_spk_btn.click(
+            refresh_speakers_ui,
+            outputs=[qwen_speaker_table, custom_speaker_dropdown]
+        )
+
         # Save preferences when users change settings
         def save_preference(key, value):
             _user_config[key] = value

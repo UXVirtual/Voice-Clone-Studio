@@ -4,3 +4,7 @@ numpy
 openai-whisper
 diffusers
 deepfilternet
+librosa
+accelerate
+safetensors
+tensorboard

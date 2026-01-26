@@ -9,7 +9,7 @@ services:
     volumes:
       - ./samples:/app/samples
       - ./output:/app/output
-      # Persist HuggingFace models
+      - ./finetuned_models:/app/finetuned_models
       - hf_cache:/root/.cache/huggingface
     deploy:
       resources:

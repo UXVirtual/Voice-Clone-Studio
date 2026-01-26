@@ -5,3 +5,5 @@ __pycache__/
 *.bat
 scripts/convert_nnscaler_checkpoint_to_transformers.py
 temp/
+finetuned_models/
+output/
