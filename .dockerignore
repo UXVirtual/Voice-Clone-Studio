@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+.git/
+.gitignore
+*.bat
+scripts/convert_nnscaler_checkpoint_to_transformers.py
+temp/
