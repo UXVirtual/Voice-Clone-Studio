@@ -1,4 +1,5 @@
 import sys
+import os
 from pathlib import Path
 
 # Add vendor directories to Python path
@@ -19,7 +20,34 @@ import random
 import json
 import shutil
 import re
+import subprocess
 from textwrap import dedent
+import logging
+import traceback
+import warnings
+import sys
+import types
+
+# --- DeepFilterNet / Torchaudio Compatibility Shim ---
+try:
+    from patches import deepfilternet_torchaudio_patch
+    deepfilternet_torchaudio_patch.apply_patches()
+except ImportError:
+    print("Warning: compatibility_patches module not found. DeepFilterNet may fail to load.")
+
+# Try importing DeepFilterNet
+try:
+    from df.enhance import enhance, init_df, load_audio, save_audio
+    from df.io import load_audio as df_load_audio
+    DEEPFILTER_AVAILABLE = True
+except ImportError as e:
+    # If it still fails with the specific backend error, print guidance
+    if "torchaudio.backend" in str(e):
+        print(f"⚠ DeepFilterNet failed to load due to torchaudio incompatibility: {e}")
+    else:
+        print(f"⚠ DeepFilterNet not available: {e}")
+    DEEPFILTER_AVAILABLE = False
+# -----------------------------------------------------
 
 # Directories
 SAMPLES_DIR = Path(__file__).parent / "samples"
@@ -46,6 +74,9 @@ _custom_voice_model_size = None
 _whisper_model = None
 _vibe_voice_model = None
 _vibevoice_tts_model = None  # VibeVoice TTS for long-form multi-speaker
+_deepfilter_model = None     # DeepFilterNet model for audio cleaning
+_deepfilter_state = None     # DeepFilterNet state
+_deepfilter_params = None    # DeepFilterNet parameters
 _voice_prompt_cache = {}  # In-memory cache for voice prompts
 
 # Model size options
@@ -159,6 +190,13 @@ def unload_tts_models():
         _vibevoice_tts_model = None
         freed.append("VibeVoice TTS")
 
+    if _deepfilter_model is not None:
+        # DeepFilterNet models are small, but good practice to clean up if needed
+        # However, they don't have a standard delete/unload method, just relying on GC
+        # del _deepfilter_model
+        # _deepfilter_model = None
+        pass
+
     if freed:
         torch.cuda.empty_cache()
         print(f"🗑️ Unloaded TTS models: {', '.join(freed)}")
@@ -186,6 +224,36 @@ def unload_asr_models():
         print(f"🗑️ Unloaded ASR models: {', '.join(freed)}")
         return True
     return False
+
+
+def get_deepfilter_model():
+    """Lazy-load the DeepFilterNet model."""
+    global _deepfilter_model, _deepfilter_state, _deepfilter_params
+
+    if not DEEPFILTER_AVAILABLE:
+        raise ImportError("DeepFilterNet is not available on this system.")
+
+    if _deepfilter_model is None:
+        print("Loading DeepFilterNet model...")
+        try:
+            # Initialize with default settings (DeepFilterNet3)
+            # init_df returns (model, df_state, params) in newer versions
+            res = init_df()
+            if isinstance(res, tuple):
+                _deepfilter_model = res[0]
+                _deepfilter_state = res[1]
+                _deepfilter_params = res[2]
+            else:
+                _deepfilter_model = res
+                _deepfilter_state = None
+                _deepfilter_params = None
+                
+            print("DeepFilterNet model loaded!")
+        except Exception as e:
+            print(f"❌ Error loading DeepFilterNet: {e}")
+            raise e
+    
+    return _deepfilter_model, _deepfilter_state, _deepfilter_params
 
 
 def get_tts_model(size="1.7B"):
@@ -1627,6 +1695,48 @@ def on_prep_audio_load(audio_file):
         return None, f"Error: {str(e)}"
 
 
+def clean_audio(audio_file, progress=gr.Progress()):
+    """Clean audio using DeepFilterNet."""
+    if audio_file is None:
+        return None
+
+    if not DEEPFILTER_AVAILABLE:
+        print("DeepFilterNet not installed. Skipping cleaning.")
+        return audio_file
+
+    try:
+        progress(0.1, desc="Loading Audio Cleaner...")
+        df_model, df_state, df_params = get_deepfilter_model()
+        
+        # Get sample rate from params or use default
+        target_sr = df_params.sr if df_params is not None and hasattr(df_params, 'sr') else 48000
+
+        progress(0.3, desc="Processing audio...")
+        
+        # Load audio using DeepFilterNet's loader
+        # This returns audio tensor and sample rate
+        audio, _ = df_load_audio(audio_file, sr=target_sr)
+        
+        # Run enhancement
+        # enhance method expects audio tensor and model
+        enhanced_audio = enhance(df_model, df_state=df_state, audio=audio)
+        
+        # Save output
+        timestamp = datetime.now().strftime("%H%M%S")
+        output_path = TEMP_DIR / f"cleaned_{timestamp}.wav"
+        
+        # Save using DeepFilterNet's save function
+        save_audio(str(output_path), enhanced_audio, target_sr)
+        
+        progress(1.0, desc="Done!")
+        return str(output_path)
+
+    except Exception as e:
+        print(f"Error cleaning audio: {e}")
+        # Return original if cleaning fails
+        return audio_file
+
+
 def normalize_audio(audio_file):
     """Normalize audio levels."""
     if audio_file is None:
@@ -2518,6 +2628,10 @@ def create_ui():
                             clear_btn = gr.Button("Clear", size="sm")
                             normalize_btn = gr.Button("Normalize Volume", size="sm")
                             mono_btn = gr.Button("Convert to Mono", size="sm")
+                            clean_btn = gr.Button("AI Denoise", size="sm", variant="secondary")
+                            if not DEEPFILTER_AVAILABLE:
+                                clean_btn.interactive = False
+                                clean_btn.value = "AI Denoise (Not Installed)"
 
                         prep_audio_info = gr.Textbox(
                             label="Audio Info",
@@ -2655,6 +2769,13 @@ def create_ui():
                 # Convert to mono
                 mono_btn.click(
                     convert_to_mono,
+                    inputs=[prep_audio_editor],
+                    outputs=[prep_audio_editor]
+                )
+
+                # Clean audio
+                clean_btn.click(
+                    clean_audio,
                     inputs=[prep_audio_editor],
                     outputs=[prep_audio_editor]
                 )
@@ -2857,7 +2978,7 @@ if __name__ == "__main__":
 
     app = create_ui()
     app.launch(
-        server_name="127.0.0.1",
+        server_name=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"),
         server_port=7860,
         share=False,
         inbrowser=True,

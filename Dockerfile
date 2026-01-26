@@ -4,6 +4,7 @@ FROM python:3.12-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV GRADIO_SERVER_NAME="0.0.0.0"
 
 # Install system dependencies
 # sox and ffmpeg are required as per README.md and setup.bat
@@ -30,9 +31,22 @@ RUN pip install --no-cache-dir torch==2.9.1 torchaudio --index-url https://downl
 # Using v2.8.3 wheel for CUDA 12.8 and Torch 2.9.0 (compatible with 2.9.x) and Python 3.12
 RUN pip install --no-cache-dir https://github.com/bdashore3/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu128torch2.9.0cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
 
+# Install rust compiler (required for deepfilternet)
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && . $HOME/.cargo/env \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+ENV PATH="/root/.cargo/bin:${PATH}"
+
 # Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy compatibility patches and apply them during build to verify
+COPY patches/ patches/
+RUN python patches/deepfilternet_torchaudio_patch.py
 
 # Copy the rest of the application
 COPY . .

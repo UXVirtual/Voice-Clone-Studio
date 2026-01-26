@@ -223,7 +223,7 @@ pip install flash-attn --no-build-isolation
      ```powershell
      docker-compose up --build
      ```
-   - The application will be accessible at `http://localhost:7860`.
+   - The application will be accessible at `http://127.0.0.1:7860`.
 
 ## Usage
 
