@@ -21,6 +21,8 @@ import json
 import shutil
 import re
 from textwrap import dedent
+import ui_help
+import markdown
 
 # Directories
 SAMPLES_DIR = Path(__file__).parent / "samples"
@@ -75,18 +77,18 @@ LANGUAGES = [
     "German", "French", "Russian", "Portuguese", "Spanish", "Italian"
 ]
 
-# Custom Voice speakers with descriptions
-CUSTOM_VOICE_SPEAKERS = {
-    "Vivian": "Bright, slightly edgy young female voice (Chinese)",
-    "Serena": "Warm, gentle young female voice (Chinese)",
-    "Uncle_Fu": "Seasoned male voice with low, mellow timbre (Chinese)",
-    "Dylan": "Youthful Beijing male voice, clear and natural (Chinese/Beijing)",
-    "Eric": "Lively Chengdu male voice, slightly husky brightness (Chinese/Sichuan)",
-    "Ryan": "Dynamic male voice with strong rhythmic drive (English)",
-    "Aiden": "Sunny American male voice with clear midrange (English)",
-    "Ono_Anna": "Playful Japanese female voice, light and nimble (Japanese)",
-    "Sohee": "Warm Korean female voice with rich emotion (Korean)"
-}
+# Custom Voice speakers
+CUSTOM_VOICE_SPEAKERS = [
+    "Vivian",
+    "Serena",
+    "Uncle_Fu",
+    "Dylan",
+    "Eric",
+    "Ryan",
+    "Aiden",
+    "Ono_Anna",
+    "Sohee"
+]
 
 # ============== Configuration Management ==============
 
@@ -214,7 +216,7 @@ def get_tts_model(size="1.7B"):
             _tts_model = Qwen3TTSModel.from_pretrained(
                 model_name,
                 device_map="cuda:0",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
             )
             print(f"TTS Base model ({size}) loaded with Flash Attention 2!")
@@ -224,7 +226,7 @@ def get_tts_model(size="1.7B"):
                 _tts_model = Qwen3TTSModel.from_pretrained(
                     model_name,
                     device_map="cuda:0",
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                     attn_implementation="sdpa",
                 )
                 print(f"TTS Base model ({size}) loaded with SDPA!")
@@ -249,7 +251,7 @@ def get_voice_design_model():
             _voice_design_model = Qwen3TTSModel.from_pretrained(
                 "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
                 device_map="cuda:0",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
             )
             print("VoiceDesign model loaded with Flash Attention 2!")
@@ -259,7 +261,7 @@ def get_voice_design_model():
                 _voice_design_model = Qwen3TTSModel.from_pretrained(
                     "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
                     device_map="cuda:0",
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                     attn_implementation="sdpa",
                 )
                 print("VoiceDesign model loaded with SDPA!")
@@ -291,7 +293,7 @@ def get_custom_voice_model(size="1.7B"):
             _custom_voice_model = Qwen3TTSModel.from_pretrained(
                 model_name,
                 device_map="cuda:0",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
             )
             print(f"CustomVoice model ({size}) loaded with Flash Attention 2!")
@@ -301,7 +303,7 @@ def get_custom_voice_model(size="1.7B"):
                 _custom_voice_model = Qwen3TTSModel.from_pretrained(
                     model_name,
                     device_map="cuda:0",
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                     attn_implementation="sdpa",
                 )
                 print(f"CustomVoice model ({size}) loaded with SDPA!")
@@ -1081,7 +1083,7 @@ def generate_with_trained_model(text_to_generate, language, speaker_name, checkp
         model = Qwen3TTSModel.from_pretrained(
             checkpoint_path,
             device_map="cuda:0",
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             attn_implementation="flash_attention_2",
         )
 
@@ -1139,8 +1141,8 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
         return None, "❌ Please enter conversation lines."
 
     try:
-        # Speaker number to name mapping (in order of CUSTOM_VOICE_SPEAKERS)
-        speaker_list = list(CUSTOM_VOICE_SPEAKERS.keys())
+        # Speaker number to name mapping from CUSTOM_VOICE_SPEAKERS
+        speaker_list = CUSTOM_VOICE_SPEAKERS
 
         # Parse conversation lines - support [Speaker N]:, [N]:, and SpeakerName: formats
         lines = []
@@ -2283,15 +2285,25 @@ def save_trimmed_audio(audio_path, trimmed_audio):
         if not audio_path or not Path(audio_path).exists():
             return None, "❌ Invalid audio path"
 
-        # trimmed_audio is a tuple: (sample_rate, audio_data)
-        sr, audio_data = trimmed_audio
+        # trimmed_audio can be either:
+        # - filepath string (when type="filepath")
+        # - tuple (sample_rate, audio_data) (when type="numpy")
+        if isinstance(trimmed_audio, str):
+            # It's a filepath - copy the trimmed file to original location
+            import shutil
+            shutil.copy(trimmed_audio, audio_path)
+            output_path = Path(audio_path)
+            return str(output_path), f"✅ Saved trimmed audio to {output_path.name}"
+        else:
+            # It's numpy format - convert and save
+            sr, audio_data = trimmed_audio
 
-        # Save over the original file
-        output_path = Path(audio_path)
-        sf.write(str(output_path), audio_data, sr, subtype='PCM_16')
+            # Save over the original file
+            output_path = Path(audio_path)
+            sf.write(str(output_path), audio_data, sr, subtype='PCM_16')
 
-        # Return the saved audio data so it updates in the UI
-        return (sr, audio_data), f"✅ Saved trimmed audio to {output_path.name}"
+            # Return the saved audio data so it updates in the UI
+            return (sr, audio_data), f"✅ Saved trimmed audio to {output_path.name}"
     except Exception as e:
         return None, f"❌ Error saving: {str(e)}"
 
@@ -2731,6 +2743,36 @@ def train_model(folder, speaker_name, ref_audio_filename, model_size, batch_size
 def create_ui():
     """Create the Gradio interface."""
 
+    # Load custom theme from local theme.json (colors pre-configured with orange)
+    theme = gr.themes.Base.load('theme.json')
+
+    # Helper function to format help content with markdown
+    def format_help_html(markdown_text, height="70vh"):
+        """Convert markdown to HTML with scrollable container styling that matches Gradio components.
+
+        Args:
+            markdown_text: Markdown content to convert
+            height: CSS height value (default: "70vh")
+        """
+        html_content = markdown.markdown(
+            markdown_text,
+            extensions=['fenced_code', 'tables', 'nl2br']
+        )
+        return f"""
+        <div style="
+            width: 100%;
+            max-height: {height};
+            overflow-y: auto;
+            box-sizing: border-box;
+            color: var(--block-label-text-color);
+            font-size: var(--block-text-size);
+            font-family: var(--font);
+            line-height: 1.6;
+        ">
+            {html_content}
+        </div>
+        """
+
     with gr.Blocks(title="Voice Clone Studio") as app:
         gr.Markdown("""
         # 🎙️ Voice Clone Studio
@@ -2740,11 +2782,7 @@ def create_ui():
         with gr.Tabs():
             # ============== TAB 1: Voice Clone ==============
             with gr.TabItem("Voice Clone"):
-                gr.Markdown("""
-                ### Clone Voices from Your Samples
-
-                Select a prepared voice sample and generate speech in that voice. Use the Prep Samples tab to add or edit your samples.
-                """)
+                gr.Markdown("Clone Voices from Your Samples, using Qwen3-TTS or VibeVoice")
                 with gr.Row():
                     # Left column - Sample selection (1/3 width)
                     with gr.Column(scale=1):
@@ -2772,22 +2810,23 @@ def create_ui():
                         sample_text = gr.Textbox(
                             label="Sample Text",
                             interactive=False,
-                            lines=3
+                            max_lines=10
                         )
 
                         sample_info = gr.Textbox(
                             label="Info",
-                            interactive=False
+                            interactive=False,
+                            max_lines=3
                         )
 
                     # Right column - Generation (2/3 width)
-                    with gr.Column(scale=2):
+                    with gr.Column(scale=3):
                         gr.Markdown("### Generate Speech")
 
                         text_input = gr.Textbox(
                             label="Text to Generate",
                             placeholder="Enter the text you want to speak in the cloned voice...",
-                            lines=4
+                            lines=6
                         )
 
                         with gr.Row():
@@ -2820,7 +2859,7 @@ def create_ui():
                             type="filepath"
                         )
 
-                        status_text = gr.Textbox(label="Status", interactive=False, lines=3)
+                        status_text = gr.Textbox(label="Status", interactive=False, max_lines=3)
 
                 # Event handlers for Voice Clone tab
                 def load_selected_sample(sample_name):
@@ -2882,250 +2921,9 @@ def create_ui():
                     outputs=[output_audio, status_text]
                 )
 
-            # ============== TAB 2: Unified Conversation ==============
-            with gr.TabItem("Conversation"):
-                gr.Markdown("""
-                ### Create Multi-Speaker Conversations
-
-                Choose between **Qwen** (preset voices with support for Style Instructions) or **VibeVoice** (high-quality, custom voices, up to 90 minutes).
-                """)
-
-                # Model selector at top
-                initial_conv_model = _user_config.get("conv_model_type", "Qwen")
-                is_qwen_initial = initial_conv_model == "Qwen"
-
-                with gr.Row():
-                    conv_model_type = gr.Radio(
-                        choices=["Qwen", "VibeVoice"],
-                        value=initial_conv_model,
-                        label="TTS Engine"
-                    )
-
-                with gr.Row():
-                    # Left - Script input and model-specific controls
-                    with gr.Column(scale=2):
-                        gr.Markdown("### Conversation Script")
-
-                        conversation_script = gr.Textbox(
-                            label="Script",
-                            placeholder=dedent("""\
-                                Use [N]: format for speaker labels. Add (style) for emotions:
-
-                                [1]: (cheerful) Hey, how's it going?
-                                [2]: (excited) I'm doing great, thanks for asking!
-                                [1]: That's wonderful to hear.
-                                [3]: (curious) Mind if I join this conversation?
-
-                                Style instructions work with Qwen only (VibeVoice ignores them)."""),
-                            lines=12,
-                            info="One line per speaker turn. Format: [N]: Text with (optional style) for Qwen."
-                        )
-
-                        # Qwen speaker mapping (visible when Qwen selected)
-                        qwen_speaker_table = gr.Markdown("""
-                        **Qwen Speaker Numbers → Preset Voices:**
-
-                        | # | Speaker | Voice | Language |
-                        |---|---------|-------|----------|
-                        | 1 | Vivian | Bright young female | 🇨🇳 Chinese |
-                        | 2 | Serena | Warm gentle female | 🇨🇳 Chinese |
-                        | 3 | Uncle_Fu | Seasoned mellow male | 🇨🇳 Chinese |
-                        | 4 | Dylan | Youthful Beijing male | 🇨🇳 Chinese |
-                        | 5 | Eric | Lively Chengdu male | 🇨🇳 Chinese |
-                        | 6 | Ryan | Dynamic male | 🇺🇸 English |
-                        | 7 | Aiden | Sunny American male | 🇺🇸 English |
-                        | 8 | Ono_Anna | Playful female | 🇯🇵 Japanese |
-                        | 9 | Sohee | Warm female | 🇰🇷 Korean |
-
-                        *Each speaker works best in their native language.*
-                        """, visible=is_qwen_initial)
-
-                        # VibeVoice voice sample selectors (visible when VibeVoice selected)
-                        with gr.Column(visible=not is_qwen_initial) as vibevoice_voices_section:
-                            gr.Markdown("### Voice Samples (Up to 4 Speakers)")
-                            gr.Markdown("**[1]** = Voice Sample 1, **[2]** = Sample 2, etc. Numbers beyond 4 wrap around (5→1, 6→2, etc.)")
-
-                            with gr.Row():
-                                voice_sample_1 = gr.Dropdown(
-                                    choices=get_sample_choices(),
-                                    label="[1] Voice Sample (Required)",
-                                    info="Select from your prepared samples"
-                                )
-                                voice_sample_2 = gr.Dropdown(
-                                    choices=get_sample_choices(),
-                                    label="[2] Voice Sample (Optional)",
-                                    info="Select from your prepared samples"
-                                )
-
-                            with gr.Row():
-                                voice_sample_3 = gr.Dropdown(
-                                    choices=get_sample_choices(),
-                                    label="[3] Voice Sample (Optional)",
-                                    info="Select from your prepared samples"
-                                )
-                                voice_sample_4 = gr.Dropdown(
-                                    choices=get_sample_choices(),
-                                    label="[4] Voice Sample (Optional)",
-                                    info="Select from your prepared samples"
-                                )
-
-                    # Right - Settings and output
-                    with gr.Column(scale=1):
-                        gr.Markdown("### ⚙️ Settings")
-
-                        # Qwen-specific settings
-                        with gr.Column(visible=is_qwen_initial) as qwen_settings:
-                            conv_model_size = gr.Dropdown(
-                                choices=MODEL_SIZES_CUSTOM,
-                                value=_user_config.get("conv_model_size", "Large"),
-                                label="Model Size",
-                                info="Small = 0.6B (faster), Large = 1.7B (better quality)"
-                            )
-
-                            conv_pause = gr.Slider(
-                                minimum=0.1,
-                                maximum=2.0,
-                                value=_user_config.get("conv_pause_duration", 0.5),
-                                step=0.1,
-                                label="Pause Between Lines (seconds)",
-                                info="Silence between each speaker turn"
-                            )
-
-                            conv_language = gr.Dropdown(
-                                choices=LANGUAGES,
-                                value=_user_config.get("language", "Auto"),
-                                label="Language",
-                                info="Language for all lines (Auto recommended)"
-                            )
-
-                        # VibeVoice-specific settings
-                        with gr.Column(visible=not is_qwen_initial) as vibevoice_settings:
-                            longform_model_size = gr.Dropdown(
-                                choices=MODEL_SIZES_VIBEVOICE,
-                                value=_user_config.get("vibevoice_model_size", "Large"),
-                                label="Model Size",
-                                info="Small = 1.5B (faster), Large = more stable"
-                            )
-
-                            longform_cfg_scale = gr.Slider(
-                                minimum=1.0,
-                                maximum=5.0,
-                                value=3.0,
-                                step=0.5,
-                                label="CFG Scale",
-                                info="Higher = more adherence to prompt (3.0 recommended)"
-                            )
-
-                        # Shared settings
-                        conv_seed = gr.Number(
-                            label="Seed",
-                            value=-1,
-                            precision=0,
-                            info="-1 for random"
-                        )
-
-                        conv_generate_btn = gr.Button("Generate Conversation", variant="primary", size="lg")
-
-                        gr.Markdown("### Output")
-                        conv_output_audio = gr.Audio(
-                            label="Generated Conversation",
-                            type="filepath"
-                        )
-                        conv_status = gr.Textbox(label="Status", interactive=False, lines=3)
-
-                        # Model-specific tips
-                        qwen_tips = gr.Markdown("""
-                        **Qwen Tips:**
-                        - Fast generation with preset voices
-                        - Up to 9 different speakers
-                        - Each voice optimized for their native language
-                        """, visible=is_qwen_initial)
-
-                        vibevoice_tips = gr.Markdown("""
-                        **VibeVoice Tips:**
-                        - Up to 90 minutes continuous generation
-                        - Up to 4 speakers with custom voices
-                        - May spontaneously add background music/sounds
-                        - Longer scripts work best with Large model
-                        """, visible=not is_qwen_initial)
-
-                # Helper function for voice samples
-                def prepare_voice_samples_dict(v1, v2, v3, v4):
-                    """Prepare voice samples dictionary for generation."""
-                    samples = {}
-                    available_samples = get_available_samples()
-
-                    # Convert sample names to file paths
-                    for speaker_num, sample_name in [("Speaker1", v1), ("Speaker2", v2), ("Speaker3", v3), ("Speaker4", v4)]:
-                        if sample_name:
-                            for s in available_samples:
-                                if s["name"] == sample_name:
-                                    samples[speaker_num] = s["wav_path"]
-                                    break
-                    return samples
-
-                # Unified generate handler
-                def unified_conversation_generate(
-                    model_type, script,
-                    # Qwen params
-                    qwen_lang, qwen_pause, qwen_model_size,
-                    # VibeVoice params
-                    vv_v1, vv_v2, vv_v3, vv_v4, vv_model_size, vv_cfg,
-                    # Shared
-                    seed, progress=gr.Progress()
-                ):
-                    """Route to appropriate generation function based on model type."""
-                    if model_type == "Qwen":
-                        # Map UI labels to actual model sizes
-                        qwen_size = "1.7B" if qwen_model_size == "Large" else "0.6B"
-                        return generate_conversation(script, qwen_pause, qwen_lang, seed, qwen_size)
-                    else:  # VibeVoice
-                        # Map UI labels to actual model sizes
-                        vv_size = "1.5B" if vv_model_size == "Small" else "Large"
-                        voice_samples = prepare_voice_samples_dict(vv_v1, vv_v2, vv_v3, vv_v4)
-                        return generate_vibevoice_longform(script, voice_samples, vv_size, vv_cfg, seed, progress)
-
-                # Event handlers
-                conv_generate_btn.click(
-                    unified_conversation_generate,
-                    inputs=[
-                        conv_model_type, conversation_script,
-                        # Qwen
-                        conv_language, conv_pause, conv_model_size,
-                        # VibeVoice
-                        voice_sample_1, voice_sample_2, voice_sample_3, voice_sample_4,
-                        longform_model_size, longform_cfg_scale,
-                        # Shared
-                        conv_seed
-                    ],
-                    outputs=[conv_output_audio, conv_status]
-                )
-
-                # Toggle UI based on model selection
-                def toggle_conv_ui(model_type):
-                    is_qwen = model_type == "Qwen"
-                    return {
-                        qwen_speaker_table: gr.update(visible=is_qwen),
-                        vibevoice_voices_section: gr.update(visible=not is_qwen),
-                        qwen_settings: gr.update(visible=is_qwen),
-                        vibevoice_settings: gr.update(visible=not is_qwen),
-                        qwen_tips: gr.update(visible=is_qwen),
-                        vibevoice_tips: gr.update(visible=not is_qwen)
-                    }
-
-                conv_model_type.change(
-                    toggle_conv_ui,
-                    inputs=[conv_model_type],
-                    outputs=[qwen_speaker_table, vibevoice_voices_section, qwen_settings, vibevoice_settings, qwen_tips, vibevoice_tips]
-                )
-
-            # ============== TAB 3: Custom Voice ==============
+            # ============== TAB 2: Custom Voice ==============
             with gr.TabItem("Voice Presets"):
-                gr.Markdown("""
-                ### Generate with Preset or Trained Custom Voices
-
-                Use premium pre-built voices **or** your own trained custom voice models with optional style instructions.
-                """)
+                gr.Markdown("Use Qwen3-TTS pre-trained models or Custom Trained models with style control")
 
                 with gr.Row():
                     # Left - Speaker selection
@@ -3140,30 +2938,44 @@ def create_ui():
 
                         # Premium speakers dropdown
                         with gr.Column(visible=True) as premium_section:
-                            speaker_choices = [f"{name} - {desc}" for name, desc in CUSTOM_VOICE_SPEAKERS.items()]
+                            speaker_choices = CUSTOM_VOICE_SPEAKERS
                             custom_speaker_dropdown = gr.Dropdown(
                                 choices=speaker_choices,
                                 label="Speaker",
                                 info="Choose a premium voice"
                             )
 
-                            gr.Markdown("""
-                            **Premium Speakers:**
+                            custom_model_size = gr.Dropdown(
+                                choices=MODEL_SIZES_CUSTOM,
+                                value=_user_config.get("custom_voice_size", "Large"),
+                                label="Model",
+                                info="Small = faster, Large = better quality",
+                                scale=1
+                            )
 
-                            | Speaker | Voice | Language |
-                            |---------|-------|----------|
-                            | Vivian | Bright young female | 🇨🇳 Chinese |
-                            | Serena | Warm gentle female | 🇨🇳 Chinese |
-                            | Uncle_Fu | Seasoned mellow male | 🇨🇳 Chinese |
-                            | Dylan | Youthful Beijing male | 🇨🇳 Chinese |
-                            | Eric | Lively Chengdu male | 🇨🇳 Chinese |
-                            | Ryan | Dynamic male | 🇺🇸 English |
-                            | Aiden | Sunny American male | 🇺🇸 English |
-                            | Ono_Anna | Playful female | 🇯🇵 Japanese |
-                            | Sohee | Warm female | 🇰🇷 Korean |
+                            premium_speaker_guide = dedent("""\
+                                **Premium Speakers:**
 
-                            *Each speaker works best in native language.*
-                            """)
+                                | Speaker | Voice | Language |
+                                |---------|-------|----------|
+                                | Vivian | Bright young female    | 🇨🇳 Chinese |
+                                | Serena | Warm gentle female    | 🇨🇳 Chinese |
+                                | Uncle_Fu | Seasoned mellow male    | 🇨🇳 Chinese |
+                                | Dylan | Youthful Beijing male    | 🇨🇳 Chinese |
+                                | Eric | Lively Chengdu male    | 🇨🇳 Chinese |
+                                | Ryan | Dynamic male | 🇺🇸 English    |
+                                | Aiden | Sunny American male    | 🇺🇸 English |
+                                | Ono_Anna | Playful female    | 🇯🇵 Japanese |
+                                | Sohee | Warm female    | 🇰🇷 Korean |
+
+                                *Each speaker works best in native language.*
+                                """)
+
+                            gr.HTML(
+                                value=format_help_html(premium_speaker_guide),
+                                container=True,   # give it the normal block/card container
+                                padding=True      # match block padding
+                            )
 
                         # Trained models dropdown
                         with gr.Column(visible=False) as trained_section:
@@ -3207,7 +3019,7 @@ def create_ui():
                                 info="Select your custom trained voice"
                             )
 
-                            refresh_trained_btn = gr.Button("🔄 Refresh", size="sm")
+                            refresh_trained_btn = gr.Button("Refresh", size="sm")
 
                             trained_checkpoint_dropdown = gr.Dropdown(
                                 choices=[],
@@ -3215,7 +3027,7 @@ def create_ui():
                                 info="Select which training epoch to use (latest is usually best)"
                             )
 
-                            gr.Markdown("""
+                            trained_models_tip = dedent("""\
                             **Trained Models:**
 
                             Custom voices you've trained in the Train Model tab.
@@ -3223,15 +3035,20 @@ def create_ui():
 
                             *Tip: Later epochs are usually better trained*
                             """)
+                            gr.HTML(
+                                value=format_help_html(trained_models_tip),
+                                container=True,   # give it the normal block/card container
+                                padding=True,      # match block padding
+                            )
 
                     # Right - Generation
-                    with gr.Column(scale=2):
+                    with gr.Column(scale=3):
                         gr.Markdown("### Generate Speech")
 
                         custom_text_input = gr.Textbox(
                             label="Text to Generate",
                             placeholder="Enter the text you want spoken...",
-                            lines=4
+                            lines=6
                         )
 
                         custom_instruct_input = gr.Textbox(
@@ -3256,13 +3073,6 @@ def create_ui():
                                 info="-1 for random",
                                 scale=1
                             )
-                            custom_model_size = gr.Dropdown(
-                                choices=MODEL_SIZES_CUSTOM,
-                                value=_user_config.get("custom_voice_size", "Large"),
-                                label="Model",
-                                info="Small = faster, Large = better quality",
-                                scale=1
-                            )
 
                         custom_generate_btn = gr.Button("Generate Audio", variant="primary", size="lg")
 
@@ -3270,7 +3080,7 @@ def create_ui():
                             label="Generated Audio",
                             type="filepath"
                         )
-                        custom_status = gr.Textbox(label="Status", lines=3, interactive=False)
+                        custom_status = gr.Textbox(label="Status", max_lines=3, interactive=False)
 
                 # Custom Voice event handlers
                 def extract_speaker_name(selection):
@@ -3353,17 +3163,263 @@ def create_ui():
                     outputs=[custom_output_audio, custom_status]
                 )
 
-            # ============== TAB 4: Voice Design ==============
-            with gr.TabItem("Voice Design"):
-                gr.Markdown("""
-                ### Design a Voice with Natural Language
+            # ============== TAB 3: Unified Conversation ==============
+            with gr.TabItem("Conversation"):
+                gr.Markdown("Create Conversation, using Qwen3-TTS or VibeVoice")
 
-                Describe the voice characteristics you want (age, gender, emotion, tone, accent)
-                and the model will generate speech matching that description. Save designs you like for reuse!
-                """)
+                # Model selector at top
+                initial_conv_model = _user_config.get("conv_model_type", "Qwen")
+                is_qwen_initial = initial_conv_model == "Qwen"
+                with gr.Row():
+                    conv_model_type = gr.Radio(
+                        choices=["Qwen", "VibeVoice"],
+                        value=initial_conv_model,
+                        label="Conversation Engine",
+                    )
 
                 with gr.Row():
+                    # Left - Script input and model-specific controls
                     with gr.Column(scale=2):
+                        gr.Markdown("### Conversation Script")
+
+                        conversation_script = gr.Textbox(
+                            label="Script:",
+                            placeholder=dedent("""\
+                                Use [N]: format for speaker labels. Add (style) for emotions:
+
+                                [1]: (cheerful) Hey, how's it going?
+                                [2]: (excited) I'm doing great, thanks for asking!
+                                [1]: That's wonderful to hear.
+                                [3]: (curious) Mind if I join this conversation?
+
+                                Style instructions work with Qwen only (VibeVoice ignores them)."""),
+                            lines=18
+                        )
+
+                        # Qwen speaker mapping (visible when Qwen selected)
+                        speaker_guide = dedent("""\
+                            **Qwen Speaker Numbers → Preset Voices:**
+
+                            | # | Speaker | Voice | Language |   | # | Speaker | Voice | Language |
+                            |---|---------|-------|----------|---|---|---------|-------|----------|
+                            | 1 | Vivian | Bright young female | 🇨🇳 Chinese |   | 6 | Ryan | Dynamic male | 🇺🇸 English |
+                            | 2 | Serena | Warm gentle female | 🇨🇳 Chinese |   | 7 | Aiden | Sunny American male | 🇺🇸 English |
+                            | 3 | Uncle_Fu | Seasoned mellow male | 🇨🇳 Chinese |   | 8 | Ono_Anna | Playful female | 🇯🇵 Japanese |
+                            | 4 | Dylan | Youthful Beijing male | 🇨🇳 Chinese |   | 9 | Sohee | Warm female | 🇰🇷 Korean |
+                            | 5 | Eric | Lively Chengdu male | 🇨🇳 Chinese |  |  |  |  |  |
+
+                            *Each speaker works best in their native language.*
+                            """)
+
+                        qwen_speaker_table = gr.HTML(
+                            value=format_help_html(speaker_guide),
+                            container=True,   # give it the normal block/card container
+                            padding=True,      # match block padding
+                            visible=is_qwen_initial
+                        )
+
+                        # VibeVoice voice sample selectors (visible when VibeVoice selected)
+                        with gr.Column(visible=not is_qwen_initial) as vibevoice_voices_section:
+                            gr.Markdown("### Voice Samples (Up to 4 Speakers)")
+
+                            with gr.Row():
+                                with gr.Column():
+                                    voice_sample_1 = gr.Dropdown(
+                                        choices=get_sample_choices(),
+                                        label="[1] Voice Sample (Required)",
+                                        info="Select from your prepared samples"
+                                    )
+                                with gr.Column():
+                                    voice_sample_2 = gr.Dropdown(
+                                        choices=get_sample_choices(),
+                                        label="[2] Voice Sample (Optional)",
+                                        info="Select from your prepared samples"
+                                    )
+
+                            with gr.Row():
+                                with gr.Column():
+                                    voice_sample_3 = gr.Dropdown(
+                                        choices=get_sample_choices(),
+                                        label="[3] Voice Sample (Optional)",
+                                        info="Select from your prepared samples"
+                                    )
+                                with gr.Column():
+                                    voice_sample_4 = gr.Dropdown(
+                                        choices=get_sample_choices(),
+                                        label="[4] Voice Sample (Optional)",
+                                        info="Select from your prepared samples"
+                                    )
+
+                    # Right - Settings and output
+                    with gr.Column(scale=1):
+                        gr.Markdown("### ⚙️ Settings")
+
+                        # Qwen-specific settings
+                        with gr.Column(visible=is_qwen_initial) as qwen_settings:
+                            conv_model_size = gr.Dropdown(
+                                choices=MODEL_SIZES_CUSTOM,
+                                value=_user_config.get("conv_model_size", "Large"),
+                                label="Model Size",
+                                info="Small = Faster, Large = Better Quality"
+                            )
+
+                            conv_pause = gr.Slider(
+                                minimum=0.1,
+                                maximum=2.0,
+                                value=_user_config.get("conv_pause_duration", 0.5),
+                                step=0.1,
+                                label="Pause Between Lines (seconds)",
+                                info="Silence between each speaker turn"
+                            )
+
+                            conv_language = gr.Dropdown(
+                                choices=LANGUAGES,
+                                value=_user_config.get("language", "Auto"),
+                                label="Language",
+                                info="Language for all lines (Auto recommended)"
+                            )
+
+                        # VibeVoice-specific settings
+                        with gr.Column(visible=not is_qwen_initial) as vibevoice_settings:
+                            longform_model_size = gr.Dropdown(
+                                choices=MODEL_SIZES_VIBEVOICE,
+                                value=_user_config.get("vibevoice_model_size", "Large"),
+                                label="Model Size",
+                                info="Small = Faster, Large = Better Quality"
+                            )
+
+                            longform_cfg_scale = gr.Slider(
+                                minimum=1.0,
+                                maximum=5.0,
+                                value=3.0,
+                                step=0.5,
+                                label="CFG Scale",
+                                info="Higher = more adherence to prompt (3.0 recommended)"
+                            )
+
+                        # Shared settings
+                        conv_seed = gr.Number(
+                            label="Seed",
+                            value=-1,
+                            precision=0,
+                            info="-1 for random"
+                        )
+
+                        conv_generate_btn = gr.Button("Generate Conversation", variant="primary", size="lg")
+
+                        gr.Markdown("### Output")
+                        conv_output_audio = gr.Audio(
+                            label="Generated Conversation",
+                            type="filepath"
+                        )
+                        conv_status = gr.Textbox(label="Status", interactive=False, max_lines=3)
+
+                        # Model-specific tips
+                        qwen_tips_text = dedent("""\
+                        **Qwen Tips:**
+                        - Fast generation with preset voices
+                        - Up to 9 different speakers
+                        - Each voice optimized for their native language
+                        """)
+
+                        vibevoice_tips_text = dedent("""\
+                        **VibeVoice Tips:**
+                        - Up to 90 minutes continuous generation
+                        - Up to 4 speakers with custom voices
+                        - May spontaneously add background music/sounds
+                        - Longer scripts work best with Large model
+                        """)
+
+                        qwen_tips = gr.HTML(
+                            value=format_help_html(qwen_tips_text),
+                            container=True,   # give it the normal block/card container
+                            padding=True,      # match block padding
+                            visible=is_qwen_initial
+                        )
+
+                        vibevoice_tips = gr.HTML(
+                            value=format_help_html(vibevoice_tips_text),
+                            container=True,   # give it the normal block/card container
+                            padding=True,      # match block padding
+                            visible=not is_qwen_initial
+                        )
+
+                # Helper function for voice samples
+                def prepare_voice_samples_dict(v1, v2, v3, v4):
+                    """Prepare voice samples dictionary for generation."""
+                    samples = {}
+                    available_samples = get_available_samples()
+
+                    # Convert sample names to file paths
+                    for speaker_num, sample_name in [("Speaker1", v1), ("Speaker2", v2), ("Speaker3", v3), ("Speaker4", v4)]:
+                        if sample_name:
+                            for s in available_samples:
+                                if s["name"] == sample_name:
+                                    samples[speaker_num] = s["wav_path"]
+                                    break
+                    return samples
+
+                # Unified generate handler
+                def unified_conversation_generate(
+                    model_type, script,
+                    # Qwen params
+                    qwen_lang, qwen_pause, qwen_model_size,
+                    # VibeVoice params
+                    vv_v1, vv_v2, vv_v3, vv_v4, vv_model_size, vv_cfg,
+                    # Shared
+                    seed, progress=gr.Progress()
+                ):
+                    """Route to appropriate generation function based on model type."""
+                    if model_type == "Qwen":
+                        # Map UI labels to actual model sizes
+                        qwen_size = "1.7B" if qwen_model_size == "Large" else "0.6B"
+                        return generate_conversation(script, qwen_pause, qwen_lang, seed, qwen_size)
+                    else:  # VibeVoice
+                        # Map UI labels to actual model sizes
+                        vv_size = "1.5B" if vv_model_size == "Small" else "Large"
+                        voice_samples = prepare_voice_samples_dict(vv_v1, vv_v2, vv_v3, vv_v4)
+                        return generate_vibevoice_longform(script, voice_samples, vv_size, vv_cfg, seed, progress)
+
+                # Event handlers
+                conv_generate_btn.click(
+                    unified_conversation_generate,
+                    inputs=[
+                        conv_model_type, conversation_script,
+                        # Qwen
+                        conv_language, conv_pause, conv_model_size,
+                        # VibeVoice
+                        voice_sample_1, voice_sample_2, voice_sample_3, voice_sample_4,
+                        longform_model_size, longform_cfg_scale,
+                        # Shared
+                        conv_seed
+                    ],
+                    outputs=[conv_output_audio, conv_status]
+                )
+
+                # Toggle UI based on model selection
+                def toggle_conv_ui(model_type):
+                    is_qwen = model_type == "Qwen"
+                    return {
+                        qwen_speaker_table: gr.update(visible=is_qwen),
+                        vibevoice_voices_section: gr.update(visible=not is_qwen),
+                        qwen_settings: gr.update(visible=is_qwen),
+                        vibevoice_settings: gr.update(visible=not is_qwen),
+                        qwen_tips: gr.update(visible=is_qwen),
+                        vibevoice_tips: gr.update(visible=not is_qwen)
+                    }
+
+                conv_model_type.change(
+                    toggle_conv_ui,
+                    inputs=[conv_model_type],
+                    outputs=[qwen_speaker_table, vibevoice_voices_section, qwen_settings, vibevoice_settings, qwen_tips, vibevoice_tips]
+                )
+
+            # ============== TAB 4: Voice Design ==============
+            with gr.TabItem("Voice Design"):
+                gr.Markdown("Create new voices from natural language descriptions")
+
+                with gr.Row():
+                    with gr.Column(scale=3):
                         gr.Markdown("### Create Design")
 
                         design_text_input = gr.Textbox(
@@ -3401,7 +3457,7 @@ def create_ui():
                         )
 
                         design_generate_btn = gr.Button("Generate Voice", variant="primary", size="lg")
-                        design_status = gr.Textbox(label="Status", interactive=False)
+                        design_status = gr.Textbox(label="Status", interactive=False, max_lines=3)
 
                     with gr.Column(scale=1):
                         gr.Markdown("### Preview & Save")
@@ -3410,16 +3466,14 @@ def create_ui():
                             type="filepath"
                         )
 
-                        gr.Markdown("---")
-                        gr.Markdown("**Save this design for reuse:**")
-
                         design_save_name = gr.Textbox(
-                            label="Design Name",
-                            placeholder="Enter a name for this voice design...",
+                            label="Sample Name",
+                            placeholder="Enter a name for this voice Sample...",
+                            info="Name under which to save the designed voice",
                             lines=1
                         )
 
-                        design_save_btn = gr.Button("Save Design", variant="secondary")
+                        design_save_btn = gr.Button("Save Sample", variant="primary")
                         design_save_status = gr.Textbox(label="Save Status", interactive=False)
 
                 # Voice Design event handlers
@@ -3442,13 +3496,7 @@ def create_ui():
 
             # ============== TAB 5: Prep Samples ==============
             with gr.TabItem("Prep Samples"):
-                gr.Markdown("""
-                ### Prepare Voice Samples
-
-                Load, trim, edit, transcribe, and manage your voice samples. This is your workspace for preparing
-                reference audio for voice cloning.
-                """)
-
+                gr.Markdown("Prepare audio samples for voice cloning")
                 with gr.Row():
                     # Left column - Existing samples browser
                     with gr.Column(scale=1):
@@ -3477,7 +3525,7 @@ def create_ui():
 
                         existing_sample_text = gr.Textbox(
                             label="Sample Text",
-                            lines=3,
+                            max_lines=10,
                             interactive=False
                         )
 
@@ -3485,6 +3533,8 @@ def create_ui():
                             label="Info",
                             interactive=False
                         )
+
+                        save_status = gr.Textbox(label="Save Status", interactive=False, scale=1)
 
                     # Right column - Audio/Video editing
                     with gr.Column(scale=2):
@@ -3547,21 +3597,14 @@ def create_ui():
 
                             transcribe_btn = gr.Button("Transcribe Audio", variant="primary")
 
-                gr.Markdown("---")
-
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Info")
-                        save_status = gr.Textbox(label="Save Status", interactive=False, scale=1)
-                    with gr.Column(scale=2):
-                        # Save as new sample
-                        gr.Markdown("### Save as New Sample")
-                        new_sample_name = gr.Textbox(
-                            label="Sample Name",
-                            placeholder="Enter a name for this voice sample...",
-                            scale=2
-                        )
-                        save_sample_btn = gr.Button("Save Sample", variant="primary")
+                            # Save as new sample
+                            # gr.Markdown("### Save as New Sample")
+                            new_sample_name = gr.Textbox(
+                                label="Sample Name",
+                                placeholder="Enter a name for this voice sample...",
+                                scale=2
+                            )
+                            save_sample_btn = gr.Button("Save Sample", variant="primary")
 
                 # Load existing sample to editor
                 def load_sample_to_editor(sample_name):
@@ -3666,13 +3709,7 @@ def create_ui():
 
             # ============== TAB 6: Output History ==============
             with gr.TabItem("Output History"):
-                gr.Markdown("""
-                ### Browse Previous Outputs
-
-                View, play back, and manage your previously generated audio files.
-                """)
-                gr.Markdown("### Output History")
-
+                gr.Markdown("Browse and manage previously generated audio files")
                 with gr.Row():
                     output_dropdown = gr.Dropdown(
                         choices=get_output_files(),
@@ -3748,13 +3785,7 @@ def create_ui():
 
             # ============== TAB 7: Finetune Dataset ==============
             with gr.TabItem("Finetune Dataset"):
-                gr.Markdown("""
-                ### Prepare Data for Qwen3-TTS Finetuning
-
-                Build a dataset for finetuning Qwen3-TTS on custom voices. Add audio files, auto-transcribe them,
-                and export as .txt for training.
-                """)
-
+                gr.Markdown("Manage and prepare your finetuning dataset")
                 with gr.Row():
                     # Left - File list and management
                     with gr.Column(scale=1):
@@ -3784,7 +3815,7 @@ def create_ui():
 
                         finetune_audio_preview = gr.Audio(
                             label="Audio Preview & Trim",
-                            type="numpy",
+                            type="filepath",
                             interactive=True
                         )
 
@@ -3825,55 +3856,39 @@ def create_ui():
                         finetune_status = gr.Textbox(
                             label="Status",
                             interactive=False,
-                            lines=3
+                            max_lines=3
                         )
 
-                        gr.Markdown("---")
+                        with gr.Column(scale=1):
+                            gr.Markdown("**Batch Transcribe Folder**")
 
-                        with gr.Row():
-                            with gr.Column(scale=1):
-                                gr.Markdown("**Batch Transcribe Folder**")
+                            batch_replace_existing = gr.Checkbox(
+                                label="Replace existing transcripts",
+                                value=False
+                            )
 
-                                batch_replace_existing = gr.Checkbox(
-                                    label="Replace existing transcripts",
-                                    value=False
-                                )
+                            batch_status = gr.Textbox(
+                                label="Batch Status",
+                                interactive=False,
+                                max_lines=3,
+                                show_label=False,
+                                placeholder="Results will appear here..."
+                            )
+                            batch_transcribe_btn = gr.Button("Batch Transcribe", variant="primary", size="lg")
 
-                                batch_status = gr.Textbox(
-                                    label="Batch Status",
-                                    interactive=False,
-                                    lines=3,
-                                    show_label=False,
-                                    placeholder="Results will appear here..."
-                                )
-                                batch_transcribe_btn = gr.Button("🔄 Batch Transcribe", variant="primary", size="lg")
+                            finetune_quick_guide = dedent("""\
+                            **Quick Guide:**
+                            - Create subfolders in /datasets to organize training sets
+                            - Use **Batch Transcribe** to Transcribe all files at once
+                            - Or edit individual files, trimming track and adjusting transcripts as needed.
 
-                            gr.Markdown("""
-                            **Instructions:**
-                            1. Create subfolders in `datasets/` to organize different training sets
-                            2. Place audio files in your chosen subfolder
-                            3. Select the subfolder from the Dataset Folder dropdown
-
-                            **Batch Transcription (Left):**
-                            - Configure transcription settings (model and language)
-                            - Check "Replace existing" to re-transcribe all files
-                            - Click "Batch Transcribe" to process all audio files at once
-
-                            **Individual File Editing (Right):**
-                            - Load an audio file from the dropdown
-                            - Trim the audio if needed (use the waveform editor)
-                            - Save trimmed audio if you made changes
-                            - Auto-transcribe or manually type the transcript
-                            - Save the transcript
-
-                            **Format Requirements:**
-                            - Audio: 24kHz, 16-bit, mono WAV (auto-converted during training setup)
-                            - Transcript: Exact text spoken in the audio
-                            - Recommendation: Use the same reference audio for all samples
-
-                            **Next Steps:**
-                            Go to the Train Model tab to prepare your dataset and start training.
+                            *See Help Guide tab → Finetune Dataset for detailed instructions*
                             """)
+                            gr.HTML(
+                                value=format_help_html(finetune_quick_guide),
+                                container=True,   # give it the normal block/card container
+                                padding=True      # match block padding
+                            )
 
                 # Event handlers
                 def refresh_folder_list():
@@ -3997,17 +4012,7 @@ def create_ui():
 
             # ============== TAB 8: Train Model ==============
             with gr.TabItem("Train Model"):
-                gr.Markdown("""
-                ### Fine-tune Qwen3-TTS on Your Custom Voice
-
-                Train a custom voice model on your prepared dataset. This process will:
-                1. Validate your dataset and auto-convert audio files to 24kHz
-                2. Extract audio codes using Qwen3-TTS-Tokenizer
-                3. Fine-tune the base model on your voice data
-
-                **Note:** Training requires CUDA GPU and can take 10+ minutes depending on dataset size and epochs.
-                """)
-
+                gr.Markdown("Train a custom voice model using your finetuning dataset")
                 with gr.Row():
                     # Left column - Dataset selection and validation
                     with gr.Column(scale=1):
@@ -4047,7 +4052,22 @@ def create_ui():
                             interactive=False
                         )
 
-                        start_training_btn = gr.Button("🚀 Start Training", variant="primary", size="lg")
+                        start_training_btn = gr.Button("Start Training", variant="primary", size="lg")
+
+                        train_quick_guide = dedent("""\
+                            **Quick Guide:**
+                            1. Select dataset folder
+                            2. Enter speaker name
+                            3. Choose reference audio from dataset
+                            4. Configure parameters & start training (defaults work well for most cases)
+
+                            *See Help Guide tab → Train Model for detailed instructions*
+                        """)
+                        gr.HTML(
+                            value=format_help_html(train_quick_guide),
+                            container=True,   # give it the normal block/card container
+                            padding=True      # match block padding)
+                        )
 
                     # Right column - Training configuration
                     with gr.Column(scale=1):
@@ -4091,21 +4111,6 @@ def create_ui():
                             lines=20,
                             interactive=False
                         )
-
-                        gr.Markdown("""
-                        **Usage:**
-                        1. Select your prepared dataset folder (50-100 audio clips recommended)
-                        2. Enter a unique speaker name for your trained model
-                        3. Select a reference audio (5-10 seconds, clear quality)
-                        4. Configure training parameters (defaults work well)
-                        5. Click "Start Training" and wait for completion
-
-                        **After Training:**
-                        Your model will be saved in `trained_models/{speaker_name}/`
-
-                        Use it with:
-                        Voice Presets tab > Trained Models > Select Speaker Name
-                        """)
 
                 # Event handlers for training tab
                 def update_ref_audio_dropdown(folder):
@@ -4152,6 +4157,49 @@ def create_ui():
                     ],
                     outputs=[training_status]
                 )
+
+            # ============== TAB 9: Help & Guide ==============
+            with gr.TabItem("Help Guide"):
+                gr.Markdown("# Voice Clone Studio - Help & Guide")
+
+                help_topic = gr.Radio(
+                    choices=[
+                        "Voice Clone",
+                        "Voice Presets",
+                        "Conversation",
+                        "Voice Design",
+                        "Prep Samples",
+                        "Finetune Dataset",
+                        "Train Model",
+                        "Tips & Tricks"
+                    ],
+                    value="Voice Clone",
+                    label="Select Help Topic",
+                    interactive=True
+                )
+
+                help_content = gr.HTML(
+                    value=format_help_html(ui_help.show_voice_clone_help()),
+                    container=True,   # give it the normal block/card container
+                    padding=True      # match block padding
+                )
+
+                # Map radio selection to help function
+                def show_help(topic):
+                    help_map = {
+                        "Voice Clone": ui_help.show_voice_clone_help,
+                        "Conversation": ui_help.show_conversation_help,
+                        "Voice Presets": ui_help.show_voice_presets_help,
+                        "Voice Design": ui_help.show_voice_design_help,
+                        "Prep Samples": ui_help.show_prep_samples_help,
+                        "Finetune Dataset": ui_help.show_finetune_help,
+                        "Train Model": ui_help.show_train_help,
+                        "Tips & Tricks": ui_help.show_tips_help
+                    }
+                    return format_help_html(help_map[topic]())
+
+                # Event handler for radio selection
+                help_topic.change(fn=show_help, inputs=help_topic, outputs=help_content)
 
         # ============== Config Auto-Save ==============
         # Save preferences when users change settings
@@ -4232,21 +4280,7 @@ def create_ui():
             outputs=[]
         )
 
-        gr.Markdown("""
-        ---
-        **Tips:**
-        - **Voice Clone**      : Clone from your own audio samples.
-        - **Conversation**     : Create multi-speaker dialogues with Qwen3-TTS or VibeVoice.
-        - **Voice Presets**    : Use Qwen premium pre-built voices with style control (emotion, tone, speed)
-        - **Voice Design**     : Create voices from text descriptions, save designs you like.
-        - **Prep Samples**     : Trim, clean, and transcribe audio and save as voice samples.
-        - **Output History**   : Browse, play, and manage your generated audio files.
-        - **Finetune Dataset** : Prepare training data for finetuning Qwen3-TTS on custom voices.
-        - ⚡ **Voice prompts are cached!** First generation processes the sample, subsequent ones are faster
-        - 💾 **Your preferences are auto-saved!** Model choices persist across sessions
-        """)
-
-    return app
+    return app, theme
 
 
 if __name__ == "__main__":
@@ -4254,11 +4288,11 @@ if __name__ == "__main__":
     print(f"Output directory: {OUTPUT_DIR}")
     print(f"Found {len(get_sample_choices())} samples")
 
-    app = create_ui()
+    app, theme = create_ui()
     app.launch(
         server_name="127.0.0.1",
         server_port=7860,
         share=False,
         inbrowser=True,
-        theme=gr.themes.Soft()
+        theme=theme
     )

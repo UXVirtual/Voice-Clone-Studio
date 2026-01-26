@@ -320,6 +320,11 @@ This project is based on and uses code from:
 
 ## Versions
 
+**Version 0.5.0** - UI Polish & Help System
+- **Help Guide Tab** - Comprehensive in-app documentation with 8 topic sections (First draft)
+- **Modular Help System** - Extracted help content to separate `ui_help.py` module
+- **Better Text Formatting** - Markdown rendering with scrollable containers for help content
+
 **Version 0.4.0** - Custom Voice Training
 - Added **Train Model** tab for fine-tuning custom voices
 - Complete training pipeline with validation, data preparation, and model training

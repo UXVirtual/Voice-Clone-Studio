@@ -16,3 +16,4 @@ gradio
 numpy
 openai-whisper
 diffusers
+markdown
