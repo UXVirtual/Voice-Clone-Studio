@@ -1,9 +1,4 @@
-# Qwen3-TTS (editable install from modules)
--e modules/Qwen3-TTS
-
-# Qwen3-TTS dependencies
-transformers==4.57.3
-accelerate==1.12.0
+qwen-tts
 librosa
 torchaudio
 soundfile
