@@ -2557,7 +2557,7 @@ def train_model(folder, speaker_name, ref_audio_filename, model_size, batch_size
     progress(0.3, desc="Step 2/3: Extracting audio codes...")
 
     train_with_codes_path = base_dir / "train_with_codes.jsonl"
-    prepare_script = Path(__file__).parent / "modules" / "Qwen3-TTS" / "finetuning" / "prepare_data.py"
+    prepare_script = Path(__file__).parent / "modules" / "qwen_finetune" / "prepare_data.py"
 
     if not prepare_script.exists():
         status_log.append("❌ Qwen3-TTS finetuning scripts not found!")
@@ -2621,9 +2621,9 @@ def train_model(folder, speaker_name, ref_audio_filename, model_size, batch_size
     status_log.append("=" * 60)
     status_log.append("STEP 3/3: TRAINING MODEL")
     status_log.append("=" * 60)
-    progress(0.5, desc="Step 3/3: Training model (this will take a while)...")
+    progress(0.5, desc="Step 3/3: Training model (this may take a while)...")
 
-    sft_script = Path(__file__).parent / "modules" / "Qwen3-TTS" / "finetuning" / "sft_12hz.py"
+    sft_script = Path(__file__).parent / "modules" / "qwen_finetune" / "sft_12hz.py"
 
     if not sft_script.exists():
         status_log.append("❌ sft_12hz.py not found!")
