@@ -7,7 +7,6 @@ services:
     ports:
       - "7860:7860"
     volumes:
-      # - .:/app # Removed full mount to use build-time copy of python files
       - ./samples:/app/samples
       - ./output:/app/output
       # Persist HuggingFace models
