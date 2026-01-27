@@ -17,6 +17,15 @@ echo "ℹ️  Linux installation uses VibeVoice ASR for transcription"
 echo "   (openai-whisper is skipped due to compatibility issues)"
 echo ""
 
+# Install system dependencies (Ubuntu/Debian)
+if command -v apt >/dev/null 2>&1; then
+  echo "Detected apt-based system (Ubuntu/Debian), installing system packages..."
+  sudo apt update
+  sudo apt install -y ffmpeg sox libsox-fmt-all
+else
+  echo "apt not found, skipping system package install (please install ffmpeg and sox manually)."
+fi
+
 # Create virtual environment
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment..."
@@ -66,7 +75,8 @@ echo "========================================="
 echo ""
 echo "To run the application:"
 echo "  1. source venv/bin/activate"
-echo "  2. python voice_clone_ui.py"
+echo "  2. python voice_clone_studio.py"
+echo "  3. Or use: launch.sh"
 echo ""
 echo "📝 NOTE: This installation uses VibeVoice ASR for transcription."
 echo "         Whisper is not included (Linux compatibility issues)."

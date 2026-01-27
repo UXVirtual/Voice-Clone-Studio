@@ -124,6 +124,6 @@ echo.
 echo To launch Voice Clone Studio:
 echo   1. Make sure virtual environment is activated: venv\Scripts\activate
 echo   2. Run: python Voice_Clone_Studio.py
-echo   3. Or use: Launch_UI.bat
+echo   3. Or use: launch.bat
 echo.
 pause
