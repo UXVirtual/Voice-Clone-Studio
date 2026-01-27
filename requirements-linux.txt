@@ -20,6 +20,7 @@ gradio
 numpy
 diffusers
 markdown
+bitsandbytes  # Required for 4-bit quantized models (VibeVoice Large 4-bit)
 
 # Note: openai-whisper is NOT included for Linux (compatibility issues)
-# VibeVoice ASR is used for transcription instead - works great!
+# VibeVoice ASR is used for transcription instead

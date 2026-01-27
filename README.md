@@ -402,6 +402,12 @@ This project is based on and uses code from:
 
 ## Versions
 
+**Version 0.6.0** - Enhanced Model Support & Settings
+- **VibeVoice Large 4-bit** - Added support for quantized 4-bit VibeVoice Large model for reduced VRAM usage
+- **Settings Tab** - New centralized settings interface with configurable folder paths
+- **Low CPU Memory Option** - Toggle to reduce CPU memory usage during model loading (all models)
+- **UI Improvements** - Reorganized Voice Clone tab with conditional visibility and better layout
+
 **Version 0.5.5** - UI Polish
 - Added Custom Confirmation pop up Dialog in js for delete taks.
 - Added Custom File list display Dialog. 

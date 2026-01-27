@@ -29,11 +29,55 @@ from modules.ui_components.confirmation_modal import (
 )
 
 # Directories
-SAMPLES_DIR = Path(__file__).parent / "samples"
-OUTPUT_DIR = Path(__file__).parent / "output"
-TEMP_DIR = Path(__file__).parent / "temp"
-DATASETS_DIR = Path(__file__).parent / "datasets"
 CONFIG_FILE = Path(__file__).parent / "config.json"
+
+# Load config on startup (before initializing directories)
+def load_config():
+    """Load user preferences from config file."""
+    default_config = {
+        "transcribe_model": "Whisper",
+        "tts_base_size": "Large",
+        "custom_voice_size": "Large",
+        "language": "Auto",
+        "conv_pause_duration": 0.5,
+        "whisper_language": "Auto-detect",
+        "low_cpu_mem_usage": False,
+        "samples_folder": "samples",
+        "output_folder": "output",
+        "datasets_folder": "datasets",
+        "temp_folder": "temp",
+        "models_folder": "models"
+    }
+
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, 'r') as f:
+                saved_config = json.load(f)
+                # Merge with defaults to handle new settings
+                default_config.update(saved_config)
+    except Exception as e:
+        print(f"Warning: Could not load config: {e}")
+
+    return default_config
+
+
+def save_config(config):
+    """Save user preferences to config file."""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Could not save config: {e}")
+
+
+# Load config first
+_user_config = load_config()
+
+# Initialize directories from config
+SAMPLES_DIR = Path(__file__).parent / _user_config.get("samples_folder", "samples")
+OUTPUT_DIR = Path(__file__).parent / _user_config.get("output_folder", "output")
+TEMP_DIR = Path(__file__).parent / _user_config.get("temp_folder", "temp")
+DATASETS_DIR = Path(__file__).parent / _user_config.get("datasets_folder", "datasets")
 SAMPLES_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 DATASETS_DIR.mkdir(exist_ok=True)
@@ -62,13 +106,14 @@ MODEL_SIZES = ["Small", "Large"]  # Small=0.6B, Large=1.7B
 MODEL_SIZES_BASE = ["Small", "Large"]  # Base model: Small=0.6B, Large=1.7B
 MODEL_SIZES_CUSTOM = ["Small", "Large"]  # CustomVoice: Small=0.6B, Large=1.7B
 MODEL_SIZES_DESIGN = ["1.7B"]  # VoiceDesign only has 1.7B
-MODEL_SIZES_VIBEVOICE = ["Small", "Large"]  # VibeVoice: Small=1.5B, Large=Large
+MODEL_SIZES_VIBEVOICE = ["Small", "Large (4-bit)", "Large"]  # VibeVoice: Small=1.5B, Large (4-bit)=7B quantized, Large=Large,
 
 # Voice Clone engine and model options
 VOICE_CLONE_OPTIONS = [
     "Qwen3 - Small",
     "Qwen3 - Large",
     "VibeVoice - Small",
+    "VibeVoice - Large (4-bit)",
     "VibeVoice - Large"
 ]
 
@@ -95,41 +140,7 @@ CUSTOM_VOICE_SPEAKERS = [
 ]
 
 # ============== Configuration Management ==============
-
-def load_config():
-    """Load user preferences from config file."""
-    default_config = {
-        "transcribe_model": "Whisper",
-        "tts_base_size": "Large",
-        "custom_voice_size": "Large",
-        "language": "Auto",
-        "conv_pause_duration": 0.5,
-        "whisper_language": "Auto-detect"
-    }
-
-    try:
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, 'r') as f:
-                saved_config = json.load(f)
-                # Merge with defaults to handle new settings
-                default_config.update(saved_config)
-    except Exception as e:
-        print(f"Warning: Could not load config: {e}")
-
-    return default_config
-
-
-def save_config(config):
-    """Save user preferences to config file."""
-    try:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
-    except Exception as e:
-        print(f"Warning: Could not save config: {e}")
-
-
-# Load config on startup
-_user_config = load_config()
+# (Functions moved earlier before directory initialization)
 
 # Check Whisper availability
 try:
@@ -222,6 +233,7 @@ def get_tts_model(size="1.7B"):
                 device_map="cuda:0",
                 dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
+                low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
             )
             print(f"TTS Base model ({size}) loaded with Flash Attention 2!")
         except Exception as e:
@@ -232,6 +244,7 @@ def get_tts_model(size="1.7B"):
                     device_map="cuda:0",
                     dtype=torch.bfloat16,
                     attn_implementation="sdpa",
+                    low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
                 )
                 print(f"TTS Base model ({size}) loaded with SDPA!")
             else:
@@ -257,6 +270,7 @@ def get_voice_design_model():
                 device_map="cuda:0",
                 dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
+                low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
             )
             print("VoiceDesign model loaded with Flash Attention 2!")
         except Exception as e:
@@ -267,6 +281,7 @@ def get_voice_design_model():
                     device_map="cuda:0",
                     dtype=torch.bfloat16,
                     attn_implementation="sdpa",
+                    low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
                 )
                 print("VoiceDesign model loaded with SDPA!")
             else:
@@ -299,6 +314,7 @@ def get_custom_voice_model(size="1.7B"):
                 device_map="cuda:0",
                 dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
+                low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
             )
             print(f"CustomVoice model ({size}) loaded with Flash Attention 2!")
         except Exception as e:
@@ -309,6 +325,7 @@ def get_custom_voice_model(size="1.7B"):
                     device_map="cuda:0",
                     dtype=torch.bfloat16,
                     attn_implementation="sdpa",
+                    low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
                 )
                 print(f"CustomVoice model ({size}) loaded with SDPA!")
             else:
@@ -372,7 +389,8 @@ def get_vibe_voice_model():
                     dtype=dtype,
                     device_map=device if device == "auto" else None,
                     attn_implementation="flash_attention_2",
-                    trust_remote_code=True
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
                 )
                 print("VibeVoice ASR loaded with Flash Attention 2!")
             except Exception as e:
@@ -383,7 +401,8 @@ def get_vibe_voice_model():
                         dtype=dtype,
                         device_map=device if device == "auto" else None,
                         attn_implementation="sdpa",
-                        trust_remote_code=True
+                        trust_remote_code=True,
+                        low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
                     )
                     print("VibeVoice ASR loaded with SDPA!")
                 else:
@@ -499,7 +518,20 @@ def get_vibevoice_tts_model(model_size="1.5B"):
             import warnings
 
             # Map size to HuggingFace model path
-            model_path = f"FranckyB/VibeVoice-{model_size}"
+            if model_size == "Large (4-bit)":
+                model_path = "FranckyB/VibeVoice-Large-4bit"
+                # Check if bitsandbytes is available for 4-bit models
+                try:
+                    import bitsandbytes
+                except ImportError:
+                    raise ImportError(
+                        "bitsandbytes is required for 4-bit models but not installed.\n"
+                        "Install it with: pip install bitsandbytes\n"
+                        "Note: bitsandbytes may not work properly on Windows. "
+                        "Use 'VibeVoice - Large' or 'VibeVoice - Small' instead."
+                    )
+            else:
+                model_path = f"FranckyB/VibeVoice-{model_size}"
 
             # Suppress tokenizer mismatch warning (Qwen2Tokenizer wrapped in VibeVoice is intentional)
             import logging
@@ -513,7 +545,8 @@ def get_vibevoice_tts_model(model_size="1.5B"):
                     model_path,
                     dtype=torch.bfloat16,
                     device_map="cuda:0" if torch.cuda.is_available() else "cpu",
-                    attn_implementation="sdpa"  # Use scaled dot-product attention
+                    attn_implementation="sdpa",  # Use scaled dot-product attention
+                    low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)  # Memory efficiency option
                 )
 
             print(f"VibeVoice TTS ({model_size}) loaded!")
@@ -775,6 +808,8 @@ def generate_audio(sample_name, text_to_generate, language, seed, model_selectio
         engine = "vibevoice"
         if "Small" in model_selection:
             model_size = "1.5B"
+        elif "4-bit" in model_selection:
+            model_size = "Large (4-bit)"
         else:  # Large
             model_size = "Large"
     else:  # Qwen3
@@ -841,7 +876,11 @@ def generate_audio(sample_name, text_to_generate, language, seed, model_selectio
             import warnings
             import logging
 
-            model_path = f"FranckyB/VibeVoice-{model_size}"
+            # Map model_size to valid HuggingFace repo path
+            if model_size == "Large (4-bit)":
+                model_path = "FranckyB/VibeVoice-Large-4bit"
+            else:
+                model_path = f"FranckyB/VibeVoice-{model_size}"
 
             # Suppress tokenizer mismatch warning
             prev_level = logging.getLogger("transformers.tokenization_utils_base").level
@@ -1089,6 +1128,7 @@ def generate_with_trained_model(text_to_generate, language, speaker_name, checkp
             device_map="cuda:0",
             dtype=torch.bfloat16,
             attn_implementation="flash_attention_2",
+            low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
         )
 
         progress(0.3, desc="Generating with trained voice...")
@@ -1298,7 +1338,11 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
         import warnings
         import logging
 
-        model_path = f"FranckyB/VibeVoice-{model_size}"
+        # Map model_size to valid HuggingFace repo path
+        if model_size == "Large (4-bit)":
+            model_path = "FranckyB/VibeVoice-Large-4bit"
+        else:
+            model_path = f"FranckyB/VibeVoice-{model_size}"
 
         # Suppress tokenizer mismatch warning
         prev_level = logging.getLogger("transformers.tokenization_utils_base").level
@@ -2945,13 +2989,23 @@ def create_ui():
                             lines=6
                         )
 
-                        with gr.Row():
+                        # Language dropdown (hidden for VibeVoice models)
+                        is_qwen_initial = "Qwen" in _user_config.get("voice_clone_model", DEFAULT_VOICE_CLONE_MODEL)
+                        with gr.Row(visible=is_qwen_initial) as language_row:
                             language_dropdown = gr.Dropdown(
                                 choices=LANGUAGES,
                                 value=_user_config.get("language", "Auto"),
                                 label="Language",
-                                info="Language of the text to generate",
-                                scale=2
+                                info="Language of the audio to generate"
+                            )
+
+                        with gr.Row():
+                            clone_model_dropdown = gr.Dropdown(
+                                choices=VOICE_CLONE_OPTIONS,
+                                value=_user_config.get("voice_clone_model", DEFAULT_VOICE_CLONE_MODEL),
+                                label="Engine & Model",
+                                info="Choose between Qwen3 (fast, cached prompts) or VibeVoice (high-quality, long-form capable)",
+                                scale=4
                             )
                             seed_input = gr.Number(
                                 label="Seed",
@@ -2960,13 +3014,6 @@ def create_ui():
                                 info="-1 for random",
                                 scale=1
                             )
-
-                        clone_model_dropdown = gr.Dropdown(
-                            choices=VOICE_CLONE_OPTIONS,
-                            value=_user_config.get("voice_clone_model", DEFAULT_VOICE_CLONE_MODEL),
-                            label="Engine & Model",
-                            info="Choose between Qwen3 (fast, cached prompts) or VibeVoice (high-quality, long-form capable)"
-                        )
 
                         generate_btn = gr.Button("Generate Audio", variant="primary", size="lg")
 
@@ -3035,6 +3082,23 @@ def create_ui():
                     generate_audio,
                     inputs=[sample_dropdown, text_input, language_dropdown, seed_input, clone_model_dropdown],
                     outputs=[output_audio, status_text]
+                )
+
+                # Toggle language visibility based on model selection
+                def toggle_language_visibility(model_selection):
+                    is_qwen = "Qwen" in model_selection
+                    return gr.update(visible=is_qwen)
+
+                clone_model_dropdown.change(
+                    toggle_language_visibility,
+                    inputs=[clone_model_dropdown],
+                    outputs=[language_row]
+                )
+
+                clone_model_dropdown.change(
+                    lambda x: save_preference("voice_clone_model", x),
+                    inputs=[clone_model_dropdown],
+                    outputs=[]
                 )
 
             # ============== TAB 2: Custom Voice ==============
@@ -3308,16 +3372,19 @@ def create_ui():
                         with gr.Column(visible=not is_qwen_initial) as vibevoice_voices_section:
                             gr.Markdown("### Voice Samples (Up to 4 Speakers)")
 
+                            # Get sample choices once to avoid repeated filesystem scans
+                            available_voice_samples = get_sample_choices()
+
                             with gr.Row():
                                 with gr.Column():
                                     voice_sample_1 = gr.Dropdown(
-                                        choices=get_sample_choices(),
+                                        choices=available_voice_samples,
                                         label="[1] Voice Sample (Required)",
                                         info="Select from your prepared samples"
                                     )
                                 with gr.Column():
                                     voice_sample_2 = gr.Dropdown(
-                                        choices=get_sample_choices(),
+                                        choices=available_voice_samples,
                                         label="[2] Voice Sample (Optional)",
                                         info="Select from your prepared samples"
                                     )
@@ -3325,13 +3392,13 @@ def create_ui():
                             with gr.Row():
                                 with gr.Column():
                                     voice_sample_3 = gr.Dropdown(
-                                        choices=get_sample_choices(),
+                                        choices=available_voice_samples,
                                         label="[3] Voice Sample (Optional)",
                                         info="Select from your prepared samples"
                                     )
                                 with gr.Column():
                                     voice_sample_4 = gr.Dropdown(
-                                        choices=get_sample_choices(),
+                                        choices=available_voice_samples,
                                         label="[4] Voice Sample (Optional)",
                                         info="Select from your prepared samples"
                                     )
@@ -3462,7 +3529,12 @@ def create_ui():
                         return generate_conversation(script, qwen_pause, qwen_lang, seed, qwen_size)
                     else:  # VibeVoice
                         # Map UI labels to actual model sizes
-                        vv_size = "1.5B" if vv_model_size == "Small" else "Large"
+                        if vv_model_size == "Small":
+                            vv_size = "1.5B"
+                        elif vv_model_size == "Large (4-bit)":
+                            vv_size = "Large (4-bit)"
+                        else:
+                            vv_size = "Large"
                         voice_samples = prepare_voice_samples_dict(vv_v1, vv_v2, vv_v3, vv_v4)
                         return generate_vibevoice_longform(script, voice_samples, vv_size, vv_cfg, seed, progress)
 
@@ -3526,7 +3598,7 @@ def create_ui():
                                 choices=LANGUAGES,
                                 value=_user_config.get("language", "Auto"),
                                 label="Language",
-                                info="Language of the text to generate",
+                                info="Language of the audio to generate",
                                 scale=2
                             )
                             design_seed = gr.Number(
@@ -4108,11 +4180,11 @@ def create_ui():
                 )
 
                 # Toggle language dropdown based on transcribe model
-                def toggle_language_dropdown(model):
+                def toggle_finetune_transcribe_settings(model):
                     return gr.update(visible=(model == "Whisper"))
 
                 finetune_transcribe_model.change(
-                    toggle_language_dropdown,
+                    toggle_finetune_transcribe_settings,
                     inputs=[finetune_transcribe_model],
                     outputs=[finetune_transcribe_lang]
                 )
@@ -4331,6 +4403,155 @@ def create_ui():
 
                 # Event handler for radio selection
                 help_topic.change(fn=show_help, inputs=help_topic, outputs=help_content)
+
+            # ============== TAB 10: Settings ==============
+            with gr.TabItem("⚙️"):
+                gr.Markdown("# ⚙️ Settings")
+                gr.Markdown("Configure global application settings")
+
+                with gr.Column():
+                    gr.Markdown("### Model Loading")
+
+                    settings_low_cpu_mem = gr.Checkbox(
+                        label="Low CPU Memory Usage (Slower loading time)",
+                        value=_user_config.get("low_cpu_mem_usage", False),
+                        info="Reduces CPU RAM usage when loading models by loading weights in smaller chunks. Works with all Qwen and VibeVoice models. Tradeoff: slightly slower model loading time."
+                    )
+
+                    gr.Markdown("---")
+                    gr.Markdown("### Folder Paths")
+                    gr.Markdown("Configure where files are stored. Changes apply after clicking **Apply Changes**.")
+
+                    # Default folder paths
+                    default_folders = {
+                        "samples": "samples",
+                        "output": "output",
+                        "datasets": "datasets",
+                        "temp": "temp",
+                        "models": "models"
+                    }
+
+                    # Row 1: Samples and Output folders
+                    with gr.Row():
+                        with gr.Column():
+                            settings_samples_folder = gr.Textbox(
+                                label="Voice Samples Folder",
+                                value=_user_config.get("samples_folder", default_folders["samples"]),
+                                info="Folder for voice sample files (.wav + .json)"
+                            )
+                            reset_samples_btn = gr.Button("Reset", size="sm")
+
+                        with gr.Column():
+                            settings_output_folder = gr.Textbox(
+                                label="Output Folder",
+                                value=_user_config.get("output_folder", default_folders["output"]),
+                                info="Folder for generated audio files"
+                            )
+                            reset_output_btn = gr.Button("Reset", size="sm")
+
+                    # Row 2: Datasets and Models folders
+                    with gr.Row():
+                        with gr.Column():
+                            settings_datasets_folder = gr.Textbox(
+                                label="Datasets Folder",
+                                value=_user_config.get("datasets_folder", default_folders["datasets"]),
+                                info="Folder for training/finetuning datasets"
+                            )
+                            reset_datasets_btn = gr.Button("Reset", size="sm")
+
+                        with gr.Column():
+                            settings_models_folder = gr.Textbox(
+                                label="Models Cache Folder",
+                                value=_user_config.get("models_folder", default_folders["models"]),
+                                info="Folder for downloaded model files (HuggingFace cache)"
+                            )
+                            reset_models_btn = gr.Button("Reset", size="sm")
+
+                with gr.Column():
+                    apply_folders_btn = gr.Button("Apply Changes", variant="primary", size="lg")
+                    settings_folder_status = gr.Textbox(
+                        label="Status",
+                        interactive=False,
+                        max_lines=10
+                    )
+
+                # Save low CPU memory setting
+                settings_low_cpu_mem.change(
+                    lambda x: save_preference("low_cpu_mem_usage", x),
+                    inputs=[settings_low_cpu_mem],
+                    outputs=[]
+                )
+
+                # Reset button handlers
+                def reset_folder(folder_key):
+                    return default_folders[folder_key]
+
+                reset_samples_btn.click(
+                    lambda: reset_folder("samples"),
+                    outputs=[settings_samples_folder]
+                )
+
+                reset_output_btn.click(
+                    lambda: reset_folder("output"),
+                    outputs=[settings_output_folder]
+                )
+
+                reset_datasets_btn.click(
+                    lambda: reset_folder("datasets"),
+                    outputs=[settings_datasets_folder]
+                )
+
+                reset_models_btn.click(
+                    lambda: reset_folder("models"),
+                    outputs=[settings_models_folder]
+                )
+
+                # Apply folder changes
+                def apply_folder_changes(samples, output, datasets, models):
+                    global SAMPLES_DIR, OUTPUT_DIR, DATASETS_DIR
+
+                    try:
+                        # Get base directory (where the script is)
+                        base_dir = Path(__file__).parent
+
+                        # Update paths
+                        new_samples = base_dir / samples
+                        new_output = base_dir / output
+                        new_datasets = base_dir / datasets
+                        new_models = base_dir / models
+
+                        # Create directories if they don't exist
+                        new_samples.mkdir(exist_ok=True)
+                        new_output.mkdir(exist_ok=True)
+                        new_datasets.mkdir(exist_ok=True)
+                        new_models.mkdir(exist_ok=True)
+
+                        # Update global variables
+                        SAMPLES_DIR = new_samples
+                        OUTPUT_DIR = new_output
+                        DATASETS_DIR = new_datasets
+
+                        # Set HuggingFace cache environment variable
+                        import os
+                        os.environ['HF_HOME'] = str(new_models)
+
+                        # Save to config
+                        _user_config["samples_folder"] = samples
+                        _user_config["output_folder"] = output
+                        _user_config["datasets_folder"] = datasets
+                        _user_config["models_folder"] = models
+                        save_config(_user_config)
+
+                        return f"✅ Folder paths updated successfully!\n\nSamples: {new_samples}\nOutput: {new_output}\nDatasets: {new_datasets}\nModels: {new_models}\n\nNote: Restart the app to fully apply changes to all components."
+
+                    except Exception as e:
+                        return f"❌ Error applying changes: {str(e)}"
+
+                apply_folders_btn.click(
+                    apply_folder_changes,
+                    inputs=[settings_samples_folder, settings_output_folder, settings_datasets_folder, settings_models_folder],
+                    outputs=[settings_folder_status]
+                )
 
         # ============== Config Auto-Save ==============
         # Save preferences when users change settings
