@@ -1,0 +1,21 @@
+# Voice Clone Studio Requirements - WINDOWS ONLY
+# 
+# ⚠️  LINUX USERS: Use requirements-linux.txt instead!
+#     This file includes openai-whisper which has compatibility issues on Linux
+#
+# This file is used by setup.bat for Windows installations
+
+qwen-tts
+librosa
+torchaudio
+soundfile
+sox
+onnxruntime
+einops
+
+# Other dependencies
+gradio
+numpy
+openai-whisper; python_version < '3.10'  # Only for Python < 3.10 (incompatible with 3.10+)
+diffusers
+markdown

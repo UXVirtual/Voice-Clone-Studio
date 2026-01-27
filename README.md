@@ -3,8 +3,7 @@
 A Gradio-based web UI for voice cloning and voice design, powered by [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) and [VibeVoice](https://github.com/microsoft/VibeVoice).
 Supports both Whisper or VibeVoice-asr for automatic Transcription.
 
-![Voice Clone Studio](https://img.shields.io/badge/Voice%20Clone%20Studio-Powered%20by%20Qwen3--TTS-blue)
-![VibeVoice](https://img.shields.io/badge/VibeVoice-Long--Form%20TTS-green)
+![Voice Clone Studio](https://img.shields.io/badge/Voice%20Clone%20Studio-Powered%20by%20Qwen3--TTS-blue) ![VibeVoice](https://img.shields.io/badge/VibeVoice-%20TTS-green) ![VibeVoice](https://img.shields.io/badge/VibeVoice-%20ASR-green)
 
 ## Features
 
@@ -83,13 +82,37 @@ Create voices from natural language descriptions - no audio needed, using Qwen3-
 - Describe age, gender, emotion, accent, speaking style
 - Generate unique voices matching your description
 
+### Train Custom Voices
+Fine-tune your own custom voice models with your training data:
+
+- **Dataset Management** - Organize training samples in the `datasets/` folder
+- **Audio Preparation** - Auto-converts to 24kHz 16-bit mono format
+- **Training Pipeline** - Complete 3-step workflow (validation → extract codes → train)
+- **Epoch Selection** - Compare different training checkpoints
+- **Live Progress** - Real-time training logs and loss monitoring
+- **Voice Presets Integration** - Use trained models alongside premium speakers
+
+**Requirements:**
+- CUDA GPU required
+- Multiple audio samples with transcripts
+- Training time: ~10-30 minutes depending on dataset size
+
+**Workflow:**
+1. Prepare audio files (WAV/MP3) and organize in `datasets/YourSpeakerName/` folder
+2. Use **Batch Transcribe** to automatically transcribe all files at once
+3. Review and edit individual transcripts as needed
+4. Configure training parameters (model size, epochs, learning rate)
+5. Monitor training progress in real-time
+6. Use trained model in Voice Presets tab
+
 ### Prep Samples
 Full audio preparation workspace:
 
 - **Trim** - Use waveform selection to cut audio
 - **Normalize** - Balance audio levels
 - **Convert to Mono** - Ensure single-channel audio
-- **Transcribe** - Whisper-powered automatic transcription
+- **Transcribe** - Whisper or VibeVoice ASR automatic transcription
+- **Batch Transcribe** - Process entire folders of audio files at once
 - **Save as Sample** - One-click sample creation
 
 ### Output History
@@ -100,11 +123,15 @@ View, play back, and manage your previously generated audio files.
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.12+ (recommended for all platforms)
 - CUDA-compatible GPU (recommended: 8GB+ VRAM)
 - **SOX**  (Sound eXchange) - Required for audio processing
-- **FFMPEG** - Multimedia framework required for audio format conversion and Whisper transcription
+- **FFMPEG** - Multimedia framework required for audio format conversion
 - [Flash Attention 2](https://github.com/Dao-AILab/flash-attention) (optional but recommended)
+
+**Note for Linux users:** The Linux installation skips `openai-whisper` (compatibility issues). VibeVoice ASR is used for transcription instead.
+
+**Experiencing installation issues on Linux?** See [LINUX_INSTALL.md](LINUX_INSTALL.md) for detailed troubleshooting.
 
 ### Setup
 
@@ -129,6 +156,28 @@ This will automatically:
 - Display your Python version
 - Show instructions for optional Flash Attention 2 installation
 
+#### Quick Setup (Linux)
+
+1. Clone the repository:
+```bash
+git clone https://github.com/FranckyB/Voice-Clone-Studio.git
+cd Voice-Clone-Studio
+```
+
+2. Make the setup script executable and run it:
+```bash
+chmod +x setup-linux.sh
+./setup-linux.sh
+```
+
+This will automatically:
+- Detect your Python version
+- Create virtual environment
+- Install PyTorch with CUDA support
+- Install all dependencies (using appropriate requirements file)
+- Handle ONNX Runtime installation issues
+- Warn about Whisper compatibility if needed
+
 #### Manual Setup (All Platforms)
 
 1. Clone the repository:
@@ -148,14 +197,40 @@ source venv/bin/activate
 
 3. (NVIDIA GPU) Install PyTorch with CUDA support:
 ```bash
+# Linux/Windows
 pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl/cu130
 ```
 
 4. Install dependencies:
 ```bash
-pip install -r requirements.txt
+# Windows
+pip install -r requirements-windows.txt
+
+# Linux (skips Whisper, uses VibeVoice ASR instead)
+pip install -r requirements-linux.txt
 ```
 
+#### Linux-Specific Issues & Solutions
+
+**For detailed Linux troubleshooting and step-by-step fixes, see [LINUX_INSTALL.md](LINUX_INSTALL.md)**
+
+**Python Version:** Use Python 3.12+ on Linux. The Linux installation uses VibeVoice ASR for transcription (openai-whisper is skipped due to compatibility issues).
+
+**Issue: ONNX Runtime Build Failures**
+
+If you see ONNX runtime installation errors on Linux, try the nightly build:
+
+```bash
+# Install dependencies first
+pip install coloredlogs flatbuffers numpy packaging protobuf sympy
+
+# Try nightly build of onnxruntime
+pip install --pre --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ onnxruntime
+
+# Then install qwen-tts
+pip install qwen-tts --no-deps
+pip install librosa soundfile sox einops gradio diffusers markdown
+```
 
 5. Install Sox
 
@@ -241,7 +316,8 @@ The UI will open at `http://127.0.0.1:7860`
 ```
 Qwen3-TTS-Voice-Clone-Studio/
 ├── voice_clone_ui.py      # Main Gradio application
-├── requirements.txt       # Python dependencies
+├── requirements-windows.txt  # Python dependencies (Windows)
+├── requirements-linux.txt    # Python dependencies (Linux)
 ├── __Launch_UI.bat        # Windows launcher
 ├── samples/               # Voice samples (.wav + .txt pairs)
 │   └── example.wav
@@ -276,6 +352,42 @@ Models are automatically downloaded on first use via HuggingFace.
 - **Caching**: Voice prompts are cached - first generation is slow, subsequent ones are fast
 - **Seeds**: Use the same seed to reproduce identical outputs
 
+## Troubleshooting
+
+### Installation Issues
+
+**Q: I get "llvmlite" or "numba" build errors**
+- This is caused by `openai-whisper` on Linux
+- **Solution (Linux)**: Use `requirements-linux.txt` which skips Whisper
+- **Windows**: This shouldn't happen, but you can skip Whisper and use VibeVoice ASR
+
+**Q: ONNX Runtime fails to install on Linux**
+```bash
+# Try these steps in order:
+pip install onnxruntime  # Standard version
+# If that fails, try nightly:
+pip install --pre --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ onnxruntime
+```
+
+**Q: Dependency conflicts with qwen-tts and onnxruntime**
+```bash
+# Install qwen-tts without dependencies first, then install others separately:
+pip install qwen-tts --no-deps
+pip install onnxruntime librosa torchaudio soundfile sox einops
+```
+
+### Runtime Issues
+
+**Q: Out of memory errors**
+- Use smaller model sizes (0.6B instead of 1.7B)
+- Reduce batch size in training
+- Close other GPU-intensive applications
+
+**Q: Transcription not working**
+- **Linux**: Use VibeVoice ASR (Whisper not included on Linux)
+- **Windows**: Use either Whisper or VibeVoice ASR
+- Both transcription engines work great!
+
 ## License
 
 This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
@@ -295,6 +407,28 @@ This project is based on and uses code from:
 
 
 ## Versions
+
+**Version 0.5.5** - UI Polish
+- Added Custom Confirmation pop up Dialog in js for delete taks.
+- Added Custom File list display Dialog. 
+- (Why were both of these not built in Gradio?!)
+
+**Version 0.5.1** - UI Polish & Help System
+- **Help Guide Tab** - Comprehensive in-app documentation with 8 topic sections (First draft)
+- **Modular Help System** - Extracted help content to separate `ui_help.py` module
+- **Better Text Formatting** - Markdown rendering with scrollable containers for help content
+
+**Version 0.4.0** - Custom Voice Training
+- Added **Train Model** tab for fine-tuning custom voices
+- Complete training pipeline with validation, data preparation, and model training
+- **Batch Transcription** - Process 50-100+ audio files in one click
+- Support for both 0.6B and 1.7B base models
+- Real-time training progress monitoring with live loss values
+- Checkpoint management - compare different training epochs
+- Integration with Voice Presets tab for using trained models
+- Dataset organization system with `datasets/` folder structure
+- Automatic audio format conversion (24kHz 16-bit mono)
+- Training progress tracking and error handling
 
 **Version 0.3.5** - Style Instructions
 - Added Style Instructions support in Conversation for Qwen model. (Unsupported by VibeVoice)

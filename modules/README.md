@@ -37,7 +37,7 @@ Models automatically download from HuggingFace on first use and are cached local
 ### Usage in App
 
 - **Prep Samples Tab:** Uses VibeVoice ASR for transcription with speaker diarization
-- **Long-Form TTS Tab:** Uses VibeVoice TTS for 90-minute continuous multi-speaker synthesis
+- **Conversation Tab:** Uses VibeVoice TTS for 90-minute continuous multi-speaker synthesis
 
 ### Attribution
 

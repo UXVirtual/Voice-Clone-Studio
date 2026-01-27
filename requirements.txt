@@ -1,5 +1,0 @@
-qwen-tts
-gradio
-numpy
-openai-whisper
-diffusers

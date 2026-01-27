@@ -1,0 +1,25 @@
+# Linux-specific requirements for Voice Clone Studio
+# This is the recommended requirements file for Linux users
+
+# Core TTS dependencies
+qwen-tts
+librosa
+torchaudio
+soundfile
+sox
+einops
+
+# ONNX Runtime - Use CPU version or install GPU separately
+# For GPU support on Linux, use: pip install onnxruntime-gpu
+# For nightly builds (if stable version fails): 
+#   pip install --pre --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ onnxruntime
+onnxruntime
+
+# Other dependencies
+gradio
+numpy
+diffusers
+markdown
+
+# Note: openai-whisper is NOT included for Linux (compatibility issues)
+# VibeVoice ASR is used for transcription instead - works great!
