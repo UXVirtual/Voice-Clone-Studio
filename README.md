@@ -241,8 +241,8 @@ sudo dnf install ffmpeg
 brew install ffmpeg
 ```
 
-7. (Optional) Install performance enhancements for faster generation:
-**Note:** The application automatically detects and uses the best available attention mechanism. Configure in Settings tab: `auto` (recommended) → `sage_attn` → `flash_attention_2` → `sdpa` (built-in) → `eager` (slowest, no CUDA needed).
+7. (Optional) Install FlashAttention 2  for faster generation:
+**Note:** The application automatically detects and uses the best available attention mechanism. Configure in Settings tab: `auto` (recommended) → `flash_attention_2` → `sdpa` → `eager`
 
 ## Troubleshooting
 For troubleshooting solutions, see [docs/troubleshooting.md](docs/troubleshooting.md).

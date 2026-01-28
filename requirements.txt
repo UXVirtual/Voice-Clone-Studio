@@ -7,8 +7,10 @@ librosa
 torchaudio
 soundfile
 sox
-onnxruntime
 einops
+huggingface_hub
+onnxruntime
+onnxruntime-gpu
 
 # Web UI and utilities
 gradio
@@ -23,9 +25,7 @@ bitsandbytes
 openai-whisper; sys_platform == 'win32'  # Windows only - Linux/macOS use VibeVoice ASR instead
 
 # Optional performance enhancements (install separately for best performance):
-# - SAGE Attention (fastest): pip install sageattention
 # - Flash Attention 2 (fast): pip install flash-attn --no-build-isolation
-#   Or use prebuilt wheels: https://github.com/bdashore3/flash-attention/releases
 
 # Note for Linux users:
 # - If onnxruntime fails to install, try the nightly build:

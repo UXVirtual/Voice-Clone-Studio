@@ -359,28 +359,30 @@ def unload_all_models():
 def get_attention_implementation(user_preference="auto"):
     """
     Determine which attention implementation to use based on user preference and availability.
-    Priority order (fastest to slowest): sage_attn → flash_attention_2 → sdpa → eager
+    Priority order (fastest to slowest): flash_attention_2 → sdpa → eager
+
+    Note: sage_attn is not supported by transformers' attn_implementation parameter.
 
     Args:
-        user_preference: "auto", "sage_attn", "flash_attention_2", "sdpa", or "eager"
+        user_preference: "auto", "flash_attention_2", "sdpa", or "eager"
 
     Returns:
         list: Ordered list of attention mechanisms to try
     """
     if user_preference == "auto":
-        # Try mechanisms in order of speed: sage_attn → flash_attn → sdpa → eager
-        mechanisms_to_try = ["sage_attn", "flash_attention_2", "sdpa", "eager"]
-    elif user_preference in ["sage_attn", "flash_attention_2", "sdpa", "eager"]:
+        # Try mechanisms in order of speed: flash_attn → sdpa → eager
+        mechanisms_to_try = ["flash_attention_2", "sdpa", "eager"]
+    elif user_preference in ["flash_attention_2", "sdpa", "eager"]:
         # User selected a specific mechanism, but we'll fall back if not available
         mechanisms_to_try = [user_preference]
         # Add fallbacks in speed order
-        fallback_order = ["sage_attn", "flash_attention_2", "sdpa", "eager"]
+        fallback_order = ["flash_attention_2", "sdpa", "eager"]
         for mech in fallback_order:
             if mech != user_preference and mech not in mechanisms_to_try:
                 mechanisms_to_try.append(mech)
     else:
         # Invalid preference, default to auto
-        mechanisms_to_try = ["sage_attn", "flash_attention_2", "sdpa", "eager"]
+        mechanisms_to_try = ["flash_attention_2", "sdpa", "eager"]
 
     return mechanisms_to_try
 
@@ -3381,12 +3383,12 @@ def create_ui():
 
         # Always-visible unload button
         with gr.Row():
-            with gr.Column(scale=15):
+            with gr.Column(scale=20):
                 gr.Markdown("""
                     # 🎙️ Voice Clone Studio
                     <p style="font-size: 0.9em; color: #ffffff; margin-top: -10px;">  Powered by Qwen3-TTS, VibeVoice and Whisper</p>
                     """)
-            with gr.Column(scale=1):
+            with gr.Column(scale=1, min_width=180):
                 unload_all_btn = gr.Button("Clear VRAM", size="sm", variant="secondary")
                 unload_status = gr.Markdown(" ", visible=True)
 
@@ -3622,9 +3624,12 @@ def create_ui():
                                 choices = ["(Select Model)"] + [m['display_name'] for m in models]
                                 return gr.update(choices=choices, value="(Select Model)")
 
+                            initial_choices = get_initial_model_list()
+                            initial_value = initial_choices[0]  # Use first item in list
+
                             trained_model_dropdown = gr.Dropdown(
-                                choices=get_initial_model_list(),
-                                value="(Select Model)",
+                                choices=initial_choices,
+                                value=initial_value,
                                 label="Trained Model",
                                 info="Select your custom trained voice"
                             )
@@ -5083,14 +5088,14 @@ def create_ui():
                     settings_low_cpu_mem = gr.Checkbox(
                         label="Low CPU Memory Usage (Slower loading time)",
                         value=_user_config.get("low_cpu_mem_usage", False),
-                        info="Reduces CPU RAM usage when loading models by loading weights in smaller chunks. Works with all Qwen and VibeVoice models. Tradeoff: slightly slower model loading time."
+                        info="Reduces CPU RAM usage when loading models by loading weights in smaller chunks. Tradeoff: slightly slower model loading time."
                     )
 
                     settings_attention_mechanism = gr.Dropdown(
                         label="Attention Mechanism",
-                        choices=["auto", "sage_attn", "flash_attention_2", "sdpa", "eager"],
+                        choices=["auto", "flash_attention_2", "sdpa", "eager"],
                         value=_user_config.get("attention_mechanism", "auto"),
-                        info="Choose attention implementation. Auto = fastest available. sage_attn (fastest, pip install sageattention) → flash_attention_2 (fast, pip install flash-attn) → sdpa (medium, built-in) → eager (slowest, works without CUDA)"
+                        info="Choose attention implementation. Auto = fastest available. flash_attention_2 (fastest) → sdpa (fast, built-in PyTorch 2.0+) → eager (slowest, always works)"
                     )
 
                     gr.Markdown("---")

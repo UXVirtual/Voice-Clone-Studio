@@ -39,6 +39,7 @@ start_venv.bat
 # Project specific
 output/*
 temp/*
+test/
 samples/*
 datasets/*
 trained_models/*
