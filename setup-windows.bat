@@ -67,6 +67,15 @@ if %errorlevel% neq 0 (
 )
 echo.
 
+REM Update pip
+echo Updating pip...
+pip install --upgrade pip
+if %errorlevel% neq 0 (
+    echo ERROR: Failed to update pip!
+    pause
+    exit /b 1
+)
+
 REM Install PyTorch
 echo [5/6] Installing PyTorch...
 setlocal enabledelayedexpansion
@@ -94,7 +103,7 @@ echo.
 
 REM Install requirements
 echo [6/6] Installing requirements...
-pip install -r requirements-windows.txt
+pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo ERROR: Failed to install requirements!
     pause

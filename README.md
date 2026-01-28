@@ -123,7 +123,7 @@ View, play back, and manage your previously generated audio files.
 
 ### Prerequisites
 
-- Python 3.12+ (recommended for all platforms)
+- Python 3.10+ (recommended for all platforms)
 - CUDA-compatible GPU (recommended: 8GB+ VRAM)
 - **SOX**  (Sound eXchange) - Required for audio processing
 - **FFMPEG** - Multimedia framework required for audio format conversion
@@ -143,7 +143,7 @@ cd Voice-Clone-Studio
 
 2. Run the setup script:
 ```bash
-setup.bat
+setup-windows.bat
 ```
 
 This will automatically:
@@ -172,7 +172,7 @@ This will automatically:
 - Detect your Python version
 - Create virtual environment
 - Install PyTorch with CUDA support
-- Install all dependencies (using appropriate requirements file)
+- Install all dependencies (using requirements file)
 - Handle ONNX Runtime installation issues
 - Warn about Whisper compatibility if needed
 
@@ -201,30 +201,13 @@ pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl
 
 4. Install dependencies:
 ```bash
-# Windows
-pip install -r requirements-windows.txt
-
-# Linux (skips Whisper, uses VibeVoice ASR instead)
-pip install -r requirements-linux.txt
+# All platforms (Windows, Linux, macOS)
+pip install -r requirements.txt
 ```
 
-#### Linux-Specific Issues & Solutions
-
-**Issue: ONNX Runtime Build Failures**
-
-If you see ONNX runtime installation errors on Linux, try the nightly build:
-
-```bash
-# Install dependencies first
-pip install coloredlogs flatbuffers numpy packaging protobuf sympy
-
-# Try nightly build of onnxruntime
-pip install --pre --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ onnxruntime
-
-# Then install qwen-tts
-pip install qwen-tts --no-deps
-pip install librosa soundfile sox einops gradio diffusers markdown
-```
+**Note:** The requirements file uses platform markers to automatically install the correct packages:
+- Windows: Includes `openai-whisper` for transcription
+- Linux/macOS: Excludes `openai-whisper` (uses VibeVoice ASR instead)
 
 5. Install Sox
 
@@ -258,15 +241,12 @@ sudo dnf install ffmpeg
 brew install ffmpeg
 ```
 
-7. (Optional) Install Flash Attention 2 for better performance:
-```bash
-# Option 1 - Build from source (requires C++ compiler):
-pip install flash-attn --no-build-isolation
+7. (Optional) Install performance enhancements for faster generation:
+**Note:** The application automatically detects and uses the best available attention mechanism. Configure in Settings tab: `auto` (recommended) → `sage_attn` → `flash_attention_2` → `sdpa` (built-in) → `eager` (slowest, no CUDA needed).
 
-# Option 2 - Use prebuilt wheel (faster, recommended):
-# Download from: https://github.com/bdashore3/flash-attention/releases
-# Then: pip install downloaded-wheel-file.whl
-```
+## Troubleshooting
+For troubleshooting solutions, see [docs/troubleshooting.md](docs/troubleshooting.md).
+
 
 ## Usage
 
@@ -310,8 +290,7 @@ The UI will open at `http://127.0.0.1:7860`
 ```
 Qwen3-TTS-Voice-Clone-Studio/
 ├── voice_clone_ui.py      # Main Gradio application
-├── requirements-windows.txt  # Python dependencies (Windows)
-├── requirements-linux.txt    # Python dependencies (Linux)
+├── requirements.txt       # Python dependencies
 ├── __Launch_UI.bat        # Windows launcher
 ├── samples/               # Voice samples (.wav + .txt pairs)
 │   └── example.wav
@@ -328,14 +307,16 @@ Each tab lets you choose between model sizes:
 
 | Model | Sizes | Use Case |
 |-------|-------|----------|
-| **Base** | Small, Large | Voice cloning from samples |
-| **CustomVoice** | Small, Large | Premium speakers with style control |
-| **VoiceDesign** | 1.7B only | Voice design from descriptions |
-| **VibeVoice** | Small, Large | Long-form multi-speaker (up to 90 min) |
+| **Qwen3-TTS Base** | Small, Large | Voice cloning from samples |
+| **Qwen3-TTS CustomVoice** | Small, Large | Premium speakers with style control |
+| **Qwen3-TTS VoiceDesign** | 1.7B only | Voice design from descriptions |
+| **VibeVoice-TTS** | Small, Large | Voice cloning & Long-form multi-speaker (up to 90 min) |
+| **VibeVoice-ASR** | Large | Audio transcription |
 | **Whisper** | Medium | Audio transcription |
 
 - **Small** = Faster, less VRAM (Qwen: 0.6B ~4GB, VibeVoice: 1.5B)
 - **Large** = Better quality, more expressive (Qwen: 1.7B ~8GB, VibeVoice: Large model)
+- **4 Bit Quantized** version of the Large model is also included for VibeVoice.
 
 Models are automatically downloaded on first use via HuggingFace.
 
@@ -345,42 +326,6 @@ Models are automatically downloaded on first use via HuggingFace.
 - **Transcripts**: Should exactly match what's spoken in the audio
 - **Caching**: Voice prompts are cached - first generation is slow, subsequent ones are fast
 - **Seeds**: Use the same seed to reproduce identical outputs
-
-## Troubleshooting
-
-### Installation Issues
-
-**Q: I get "llvmlite" or "numba" build errors**
-- This is caused by `openai-whisper` on Linux
-- **Solution (Linux)**: Use `requirements-linux.txt` which skips Whisper
-- **Windows**: This shouldn't happen, but you can skip Whisper and use VibeVoice ASR
-
-**Q: ONNX Runtime fails to install on Linux**
-```bash
-# Try these steps in order:
-pip install onnxruntime  # Standard version
-# If that fails, try nightly:
-pip install --pre --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ onnxruntime
-```
-
-**Q: Dependency conflicts with qwen-tts and onnxruntime**
-```bash
-# Install qwen-tts without dependencies first, then install others separately:
-pip install qwen-tts --no-deps
-pip install onnxruntime librosa torchaudio soundfile sox einops
-```
-
-### Runtime Issues
-
-**Q: Out of memory errors**
-- Use smaller model sizes (0.6B instead of 1.7B)
-- Reduce batch size in training
-- Close other GPU-intensive applications
-
-**Q: Transcription not working**
-- **Linux**: Use VibeVoice ASR (Whisper not included on Linux)
-- **Windows**: Use either Whisper or VibeVoice ASR
-- Both transcription engines work great!
 
 ## License
 
@@ -399,48 +344,9 @@ This project is based on and uses code from:
 - [Gradio](https://gradio.app/) for the web UI framework
 - [OpenAI Whisper](https://github.com/openai/whisper) for transcription
 
+## Updates
 
-## Versions
+For detailed version history and release notes, see [docs/updates.md](docs/updates.md).
 
-**Version 0.5.5** - UI Polish
-- Added Custom Confirmation pop up Dialog in js for delete taks.
-- Added Custom File list display Dialog. 
-- (Why were both of these not built in Gradio?!)
+**Latest Version:** 0.6.0 - Enhanced Model Support & Settings (January 27, 2026)
 
-**Version 0.5.1** - UI Polish & Help System
-- **Help Guide Tab** - Comprehensive in-app documentation with 8 topic sections (First draft)
-- **Modular Help System** - Extracted help content to separate `ui_help.py` module
-- **Better Text Formatting** - Markdown rendering with scrollable containers for help content
-
-**Version 0.4.0** - Custom Voice Training
-- Added **Train Model** tab for fine-tuning custom voices
-- Complete training pipeline with validation, data preparation, and model training
-- **Batch Transcription** - Process 50-100+ audio files in one click
-- Support for both 0.6B and 1.7B base models
-- Real-time training progress monitoring with live loss values
-- Checkpoint management - compare different training epochs
-- Integration with Voice Presets tab for using trained models
-- Dataset organization system with `datasets/` folder structure
-- Automatic audio format conversion (24kHz 16-bit mono)
-- Training progress tracking and error handling
-
-**Version 0.3.5** - Style Instructions
-- Added Style Instructions support in Conversation for Qwen model. (Unsupported by VibeVoice)
-
-**Version 0.30** - Enhanced Media Support
-- Video File Support - Upload video files (.mp4, .mov, .avi, .mkv, etc.) to Prep Samples tab
-- Automatic Audio Extraction - Uses ffmpeg to extract audio from video files for voice cloning
-- Improved Workflow - Added Clear button to quickly reset the audio editor
-
-**Version 0.2** - VibeVoice Integration
-- Added **VibeVoice TTS** support for long-form multi-speaker generation (up to 90 minutes)
-- Added **VibeVoice ASR** as alternative transcription engine alongside Whisper
-- Conversation tab now supports both Qwen (9 preset voices) and VibeVoice (custom samples) engines
-- Multi-speaker conversation support with up to 4 custom voices
-
-**Version 0.1** - Initial Release
-- Voice cloning with Qwen3-TTS (Base, CustomVoice, VoiceDesign models)
-- Whisper-powered automatic transcription
-- Sample preparation toolkit (trim, normalize, mono conversion)
-- Voice prompt caching for faster generation
-- Seed control for reproducible outputs

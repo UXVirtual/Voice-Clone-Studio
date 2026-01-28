@@ -18,6 +18,7 @@ import random
 import json
 import shutil
 import re
+import time
 from textwrap import dedent
 from modules.ui_components import ui_help
 import markdown
@@ -29,11 +30,56 @@ from modules.ui_components.confirmation_modal import (
 )
 
 # Directories
-SAMPLES_DIR = Path(__file__).parent / "samples"
-OUTPUT_DIR = Path(__file__).parent / "output"
-TEMP_DIR = Path(__file__).parent / "temp"
-DATASETS_DIR = Path(__file__).parent / "datasets"
 CONFIG_FILE = Path(__file__).parent / "config.json"
+
+# Load config on startup (before initializing directories)
+def load_config():
+    """Load user preferences from config file."""
+    default_config = {
+        "transcribe_model": "Whisper",
+        "tts_base_size": "Large",
+        "custom_voice_size": "Large",
+        "language": "Auto",
+        "conv_pause_duration": 0.5,
+        "whisper_language": "Auto-detect",
+        "low_cpu_mem_usage": False,
+        "attention_mechanism": "auto",
+        "samples_folder": "samples",
+        "output_folder": "output",
+        "datasets_folder": "datasets",
+        "temp_folder": "temp",
+        "models_folder": "models"
+    }
+
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, 'r') as f:
+                saved_config = json.load(f)
+                # Merge with defaults to handle new settings
+                default_config.update(saved_config)
+    except Exception as e:
+        print(f"Warning: Could not load config: {e}")
+
+    return default_config
+
+
+def save_config(config):
+    """Save user preferences to config file."""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Could not save config: {e}")
+
+
+# Load config first
+_user_config = load_config()
+
+# Initialize directories from config
+SAMPLES_DIR = Path(__file__).parent / _user_config.get("samples_folder", "samples")
+OUTPUT_DIR = Path(__file__).parent / _user_config.get("output_folder", "output")
+TEMP_DIR = Path(__file__).parent / _user_config.get("temp_folder", "temp")
+DATASETS_DIR = Path(__file__).parent / _user_config.get("datasets_folder", "datasets")
 SAMPLES_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 DATASETS_DIR.mkdir(exist_ok=True)
@@ -55,6 +101,8 @@ _custom_voice_model_size = None
 _whisper_model = None
 _vibe_voice_model = None
 _vibevoice_tts_model = None  # VibeVoice TTS for long-form multi-speaker
+_vibevoice_tts_model_size = None
+_last_loaded_model = None  # Track which model was last loaded to determine if we need to unload
 _voice_prompt_cache = {}  # In-memory cache for voice prompts
 
 # Model size options
@@ -62,13 +110,14 @@ MODEL_SIZES = ["Small", "Large"]  # Small=0.6B, Large=1.7B
 MODEL_SIZES_BASE = ["Small", "Large"]  # Base model: Small=0.6B, Large=1.7B
 MODEL_SIZES_CUSTOM = ["Small", "Large"]  # CustomVoice: Small=0.6B, Large=1.7B
 MODEL_SIZES_DESIGN = ["1.7B"]  # VoiceDesign only has 1.7B
-MODEL_SIZES_VIBEVOICE = ["Small", "Large"]  # VibeVoice: Small=1.5B, Large=Large
+MODEL_SIZES_VIBEVOICE = ["Small", "Large (4-bit)", "Large"]  # VibeVoice: Small=1.5B, Large (4-bit)=7B quantized, Large=Large,
 
 # Voice Clone engine and model options
 VOICE_CLONE_OPTIONS = [
     "Qwen3 - Small",
     "Qwen3 - Large",
     "VibeVoice - Small",
+    "VibeVoice - Large (4-bit)",
     "VibeVoice - Large"
 ]
 
@@ -95,41 +144,7 @@ CUSTOM_VOICE_SPEAKERS = [
 ]
 
 # ============== Configuration Management ==============
-
-def load_config():
-    """Load user preferences from config file."""
-    default_config = {
-        "transcribe_model": "Whisper",
-        "tts_base_size": "Large",
-        "custom_voice_size": "Large",
-        "language": "Auto",
-        "conv_pause_duration": 0.5,
-        "whisper_language": "Auto-detect"
-    }
-
-    try:
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, 'r') as f:
-                saved_config = json.load(f)
-                # Merge with defaults to handle new settings
-                default_config.update(saved_config)
-    except Exception as e:
-        print(f"Warning: Could not load config: {e}")
-
-    return default_config
-
-
-def save_config(config):
-    """Save user preferences to config file."""
-    try:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
-    except Exception as e:
-        print(f"Warning: Could not save config: {e}")
-
-
-# Load config on startup
-_user_config = load_config()
+# (Functions moved earlier before directory initialization)
 
 # Check Whisper availability
 try:
@@ -175,6 +190,56 @@ def unload_tts_models():
     return False
 
 
+def check_and_unload_if_different(model_id):
+    """If the model being loaded differs from the last one, unload ALL models.
+
+    Args:
+        model_id: Unique identifier for the model (e.g., 'base_1.7B', 'custom_0.6B', 'vibevoice_Large')
+    """
+    global _last_loaded_model
+
+    if _last_loaded_model is not None and _last_loaded_model != model_id:
+        print(f"📦 Switching from {_last_loaded_model} to {model_id} - unloading all models...")
+        unload_all_models_internal()
+
+    _last_loaded_model = model_id
+
+
+def unload_all_models_internal():
+    """Internal function to unload all models without resetting _last_loaded_model."""
+    global _tts_model, _tts_model_size, _voice_design_model, _custom_voice_model, _custom_voice_model_size
+    global _whisper_model, _vibe_voice_model, _vibevoice_tts_model, _vibevoice_tts_model_size
+
+    if _tts_model is not None:
+        del _tts_model
+        _tts_model = None
+        _tts_model_size = None
+
+    if _voice_design_model is not None:
+        del _voice_design_model
+        _voice_design_model = None
+
+    if _custom_voice_model is not None:
+        del _custom_voice_model
+        _custom_voice_model = None
+        _custom_voice_model_size = None
+
+    if _whisper_model is not None:
+        del _whisper_model
+        _whisper_model = None
+
+    if _vibe_voice_model is not None:
+        del _vibe_voice_model
+        _vibe_voice_model = None
+
+    if _vibevoice_tts_model is not None:
+        del _vibevoice_tts_model
+        _vibevoice_tts_model = None
+        _vibevoice_tts_model_size = None
+
+    torch.cuda.empty_cache()
+
+
 def unload_asr_models():
     """Unload all ASR models to free VRAM."""
     global _whisper_model, _vibe_voice_model
@@ -197,45 +262,194 @@ def unload_asr_models():
     return False
 
 
+def unload_other_tts_models(keep_model="none"):
+    """Unload TTS models except the one specified to free VRAM when switching conversation modes.
+
+    Args:
+        keep_model: "base", "custom", "vibevoice", or "none" to keep that model loaded
+    """
+    global _tts_model, _tts_model_size, _custom_voice_model, _custom_voice_model_size, _vibevoice_tts_model, _vibevoice_tts_model_size
+
+    freed = []
+
+    if keep_model != "base" and _tts_model is not None:
+        del _tts_model
+        _tts_model = None
+        _tts_model_size = None
+        freed.append("Base TTS")
+
+    if keep_model != "custom" and _custom_voice_model is not None:
+        del _custom_voice_model
+        _custom_voice_model = None
+        _custom_voice_model_size = None
+        freed.append("CustomVoice")
+
+    if keep_model != "vibevoice" and _vibevoice_tts_model is not None:
+        del _vibevoice_tts_model
+        _vibevoice_tts_model = None
+        _vibevoice_tts_model_size = None
+        freed.append("VibeVoice TTS")
+
+    if freed:
+        torch.cuda.empty_cache()
+        print(f"🗑️ Unloaded TTS models: {', '.join(freed)}")
+        return True
+    return False
+
+
+def unload_all_models():
+    """Unload ALL models (TTS and ASR) to completely free VRAM."""
+    global _tts_model, _tts_model_size, _custom_voice_model, _custom_voice_model_size
+    global _voice_design_model, _vibevoice_tts_model, _vibevoice_tts_model_size
+    global _whisper_model, _vibe_voice_model, _last_loaded_model
+
+    freed = []
+
+    # Unload all TTS models
+    if _tts_model is not None:
+        del _tts_model
+        _tts_model = None
+        _tts_model_size = None
+        freed.append("Base TTS")
+
+    if _custom_voice_model is not None:
+        del _custom_voice_model
+        _custom_voice_model = None
+        _custom_voice_model_size = None
+        freed.append("CustomVoice")
+
+    if _voice_design_model is not None:
+        del _voice_design_model
+        _voice_design_model = None
+        freed.append("VoiceDesign")
+
+    if _vibevoice_tts_model is not None:
+        del _vibevoice_tts_model
+        _vibevoice_tts_model = None
+        _vibevoice_tts_model_size = None
+        freed.append("VibeVoice TTS")
+
+    # Unload all ASR models
+    if _whisper_model is not None:
+        del _whisper_model
+        _whisper_model = None
+        freed.append("Whisper ASR")
+
+    if _vibe_voice_model is not None:
+        del _vibe_voice_model
+        _vibe_voice_model = None
+        freed.append("VibeVoice ASR")
+
+    # Reset tracker
+    _last_loaded_model = None
+
+    if freed:
+        torch.cuda.empty_cache()
+        message = f"Unloaded {', '.join(freed)}"
+        print(message)
+        return message
+    else:
+        return "No models were loaded"
+
+
+# ============================================
+# Attention Mechanism Helper Functions
+# ============================================
+
+def get_attention_implementation(user_preference="auto"):
+    """
+    Determine which attention implementation to use based on user preference and availability.
+    Priority order (fastest to slowest): sage_attn → flash_attention_2 → sdpa → eager
+
+    Args:
+        user_preference: "auto", "sage_attn", "flash_attention_2", "sdpa", or "eager"
+
+    Returns:
+        list: Ordered list of attention mechanisms to try
+    """
+    if user_preference == "auto":
+        # Try mechanisms in order of speed: sage_attn → flash_attn → sdpa → eager
+        mechanisms_to_try = ["sage_attn", "flash_attention_2", "sdpa", "eager"]
+    elif user_preference in ["sage_attn", "flash_attention_2", "sdpa", "eager"]:
+        # User selected a specific mechanism, but we'll fall back if not available
+        mechanisms_to_try = [user_preference]
+        # Add fallbacks in speed order
+        fallback_order = ["sage_attn", "flash_attention_2", "sdpa", "eager"]
+        for mech in fallback_order:
+            if mech != user_preference and mech not in mechanisms_to_try:
+                mechanisms_to_try.append(mech)
+    else:
+        # Invalid preference, default to auto
+        mechanisms_to_try = ["sage_attn", "flash_attention_2", "sdpa", "eager"]
+
+    return mechanisms_to_try
+
+
+def load_model_with_attention(model_class, model_name, user_preference="auto", **kwargs):
+    """
+    Load a HuggingFace model with the best available attention mechanism.
+
+    Args:
+        model_class: The model class to instantiate
+        model_name: The model name/path
+        user_preference: Attention preference from config
+        **kwargs: Additional arguments for from_pretrained()
+
+    Returns:
+        tuple: (loaded_model, attention_mechanism_used)
+    """
+    mechanisms_to_try = get_attention_implementation(user_preference)
+
+    for attn in mechanisms_to_try:
+        try:
+            model = model_class.from_pretrained(
+                model_name,
+                attn_implementation=attn,
+                **kwargs
+            )
+            print(f"✓ Model loaded with {attn} attention")
+            return model, attn
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Check if it's an attention-related error
+            if any(keyword in error_msg for keyword in ["flash", "sage", "attention", "sdpa"]):
+                print(f"  {attn} not available, trying next option...")
+                continue
+            else:
+                # Different error, re-raise
+                raise e
+
+    # Should never reach here since 'eager' always works
+    raise RuntimeError("Failed to load model with any attention mechanism")
+
+
+# ============================================
+# TTS Model Loading Functions
+# ============================================
+
 def get_tts_model(size="1.7B"):
+
     """Lazy-load the TTS Base model for voice cloning."""
     global _tts_model, _tts_model_size
 
-    # Unload ASR models before loading TTS
-    unload_asr_models()
-
-    # If we need a different size, unload current model
-    if _tts_model is not None and _tts_model_size != size:
-        print(f"Switching Base model from {_tts_model_size} to {size}...")
-        del _tts_model
-        _tts_model = None
-        torch.cuda.empty_cache()
+    # Simple rule: if model differs from last, unload everything
+    model_id = f"base_{size}"
+    check_and_unload_if_different(model_id)
 
     if _tts_model is None:
         model_name = f"Qwen/Qwen3-TTS-12Hz-{size}-Base"
         print(f"Loading {model_name}...")
 
-        # Try flash_attention_2 first, fall back to sdpa if not available
-        try:
-            _tts_model = Qwen3TTSModel.from_pretrained(
-                model_name,
-                device_map="cuda:0",
-                dtype=torch.bfloat16,
-                attn_implementation="flash_attention_2",
-            )
-            print(f"TTS Base model ({size}) loaded with Flash Attention 2!")
-        except Exception as e:
-            if "flash" in str(e).lower():
-                print("Flash Attention 2 not available, using SDPA instead...")
-                _tts_model = Qwen3TTSModel.from_pretrained(
-                    model_name,
-                    device_map="cuda:0",
-                    dtype=torch.bfloat16,
-                    attn_implementation="sdpa",
-                )
-                print(f"TTS Base model ({size}) loaded with SDPA!")
-            else:
-                raise e
+        # Load with configured attention mechanism
+        _tts_model, attn_used = load_model_with_attention(
+            Qwen3TTSModel,
+            model_name,
+            user_preference=_user_config.get("attention_mechanism", "auto"),
+            device_map="cuda:0",
+            dtype=torch.bfloat16,
+            low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
+        )
+        print(f"TTS Base model ({size}) loaded!")
         _tts_model_size = size
     return _tts_model
 
@@ -244,33 +458,22 @@ def get_voice_design_model():
     """Lazy-load the VoiceDesign model (only 1.7B available)."""
     global _voice_design_model
 
-    # Unload ASR models before loading TTS
-    unload_asr_models()
+    # Simple rule: if model differs from last, unload everything
+    check_and_unload_if_different("voicedesign_1.7B")
 
     if _voice_design_model is None:
         print("Loading Qwen3-TTS VoiceDesign model (1.7B)...")
 
-        # Try flash_attention_2 first, fall back to sdpa if not available
-        try:
-            _voice_design_model = Qwen3TTSModel.from_pretrained(
-                "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-                device_map="cuda:0",
-                dtype=torch.bfloat16,
-                attn_implementation="flash_attention_2",
-            )
-            print("VoiceDesign model loaded with Flash Attention 2!")
-        except Exception as e:
-            if "flash" in str(e).lower():
-                print("Flash Attention 2 not available, using SDPA instead...")
-                _voice_design_model = Qwen3TTSModel.from_pretrained(
-                    "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-                    device_map="cuda:0",
-                    dtype=torch.bfloat16,
-                    attn_implementation="sdpa",
-                )
-                print("VoiceDesign model loaded with SDPA!")
-            else:
-                raise e
+        # Load with configured attention mechanism
+        _voice_design_model, attn_used = load_model_with_attention(
+            Qwen3TTSModel,
+            "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+            user_preference=_user_config.get("attention_mechanism", "auto"),
+            device_map="cuda:0",
+            dtype=torch.bfloat16,
+            low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
+        )
+        print("VoiceDesign model loaded!")
     return _voice_design_model
 
 
@@ -278,41 +481,24 @@ def get_custom_voice_model(size="1.7B"):
     """Lazy-load the CustomVoice model."""
     global _custom_voice_model, _custom_voice_model_size
 
-    # Unload ASR models before loading TTS
-    unload_asr_models()
-
-    # If we need a different size, unload current model
-    if _custom_voice_model is not None and _custom_voice_model_size != size:
-        print(f"Switching CustomVoice model from {_custom_voice_model_size} to {size}...")
-        del _custom_voice_model
-        _custom_voice_model = None
-        torch.cuda.empty_cache()
+    # Simple rule: if model differs from last, unload everything
+    model_id = f"custom_{size}"
+    check_and_unload_if_different(model_id)
 
     if _custom_voice_model is None:
         model_name = f"Qwen/Qwen3-TTS-12Hz-{size}-CustomVoice"
         print(f"Loading {model_name}...")
 
-        # Try flash_attention_2 first, fall back to sdpa if not available
-        try:
-            _custom_voice_model = Qwen3TTSModel.from_pretrained(
-                model_name,
-                device_map="cuda:0",
-                dtype=torch.bfloat16,
-                attn_implementation="flash_attention_2",
-            )
-            print(f"CustomVoice model ({size}) loaded with Flash Attention 2!")
-        except Exception as e:
-            if "flash" in str(e).lower():
-                print("Flash Attention 2 not available, using SDPA instead...")
-                _custom_voice_model = Qwen3TTSModel.from_pretrained(
-                    model_name,
-                    device_map="cuda:0",
-                    dtype=torch.bfloat16,
-                    attn_implementation="sdpa",
-                )
-                print(f"CustomVoice model ({size}) loaded with SDPA!")
-            else:
-                raise e
+        # Load with configured attention mechanism
+        _custom_voice_model, attn_used = load_model_with_attention(
+            Qwen3TTSModel,
+            model_name,
+            user_preference=_user_config.get("attention_mechanism", "auto"),
+            device_map="cuda:0",
+            dtype=torch.bfloat16,
+            low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
+        )
+        print(f"CustomVoice model ({size}) loaded!")
         _custom_voice_model_size = size
     return _custom_voice_model
 
@@ -324,8 +510,8 @@ def get_whisper_model():
     if not WHISPER_AVAILABLE:
         raise ImportError("Whisper is not available on this system.")
 
-    # Unload TTS models before loading ASR
-    unload_tts_models()
+    # Simple rule: if model differs from last, unload everything
+    check_and_unload_if_different("whisper_asr")
 
     if _whisper_model is None:
         print("Loading Whisper model...")
@@ -338,8 +524,8 @@ def get_vibe_voice_model():
     """Lazy-load the VibeVoice ASR model."""
     global _vibe_voice_model
 
-    # Unload TTS models before loading ASR
-    unload_tts_models()
+    # Simple rule: if model differs from last, unload everything
+    check_and_unload_if_different("vibevoice_asr")
 
     if _vibe_voice_model is None:
         print("Loading VibeVoice ASR model...")
@@ -365,29 +551,27 @@ def get_vibe_voice_model():
 
             logging.getLogger("transformers.tokenization_utils_base").setLevel(prev_level)
 
-            # Load model with flash attention if available
-            try:
-                model = VibeVoiceASRForConditionalGeneration.from_pretrained(
-                    model_path,
-                    dtype=dtype,
-                    device_map=device if device == "auto" else None,
-                    attn_implementation="flash_attention_2",
-                    trust_remote_code=True
-                )
-                print("VibeVoice ASR loaded with Flash Attention 2!")
-            except Exception as e:
-                if "flash" in str(e).lower():
-                    print("Flash Attention 2 not available, using SDPA...")
+            # Load model with configured attention
+            mechanisms_to_try = get_attention_implementation(_user_config.get("attention_mechanism", "auto"))
+
+            for attn in mechanisms_to_try:
+                try:
                     model = VibeVoiceASRForConditionalGeneration.from_pretrained(
                         model_path,
                         dtype=dtype,
                         device_map=device if device == "auto" else None,
-                        attn_implementation="sdpa",
-                        trust_remote_code=True
+                        attn_implementation=attn,
+                        trust_remote_code=True,
+                        low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
                     )
-                    print("VibeVoice ASR loaded with SDPA!")
-                else:
-                    raise e
+                    print(f"✓ VibeVoice ASR loaded with {attn} attention")
+                    break
+                except Exception as e:
+                    if attn != mechanisms_to_try[-1]:
+                        print(f"  {attn} not available, trying next option...")
+                        continue
+                    else:
+                        raise e
 
             if device != "auto":
                 model = model.to(device)
@@ -487,10 +671,11 @@ def get_vibe_voice_model():
 
 def get_vibevoice_tts_model(model_size="1.5B"):
     """Lazy-load the VibeVoice TTS model for long-form multi-speaker generation."""
-    global _vibevoice_tts_model
+    global _vibevoice_tts_model, _vibevoice_tts_model_size
 
-    # Unload ASR models before loading TTS
-    unload_asr_models()
+    # Simple rule: if model differs from last, unload everything
+    model_id = f"vibevoice_tts_{model_size}"
+    check_and_unload_if_different(model_id)
 
     if _vibevoice_tts_model is None:
         print(f"Loading VibeVoice TTS model ({model_size})...")
@@ -499,7 +684,20 @@ def get_vibevoice_tts_model(model_size="1.5B"):
             import warnings
 
             # Map size to HuggingFace model path
-            model_path = f"FranckyB/VibeVoice-{model_size}"
+            if model_size == "Large (4-bit)":
+                model_path = "FranckyB/VibeVoice-Large-4bit"
+                # Check if bitsandbytes is available for 4-bit models
+                try:
+                    import bitsandbytes
+                except ImportError:
+                    raise ImportError(
+                        "bitsandbytes is required for 4-bit models but not installed.\n"
+                        "Install it with: pip install bitsandbytes\n"
+                        "Note: bitsandbytes may not work properly on Windows. "
+                        "Use 'VibeVoice - Large' or 'VibeVoice - Small' instead."
+                    )
+            else:
+                model_path = f"FranckyB/VibeVoice-{model_size}"
 
             # Suppress tokenizer mismatch warning (Qwen2Tokenizer wrapped in VibeVoice is intentional)
             import logging
@@ -509,13 +707,16 @@ def get_vibevoice_tts_model(model_size="1.5B"):
                 warnings.filterwarnings("ignore", category=UserWarning)
 
                 # Model automatically downloads from HF if not cached
-                _vibevoice_tts_model = VibeVoiceForConditionalGenerationInference.from_pretrained(
+                _vibevoice_tts_model, attn_used = load_model_with_attention(
+                    VibeVoiceForConditionalGenerationInference,
                     model_path,
+                    user_preference=_user_config.get("attention_mechanism", "auto"),
                     dtype=torch.bfloat16,
                     device_map="cuda:0" if torch.cuda.is_available() else "cpu",
-                    attn_implementation="sdpa"  # Use scaled dot-product attention
+                    low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
                 )
 
+            _vibevoice_tts_model_size = model_size
             print(f"VibeVoice TTS ({model_size}) loaded!")
 
         except ImportError as e:
@@ -775,6 +976,8 @@ def generate_audio(sample_name, text_to_generate, language, seed, model_selectio
         engine = "vibevoice"
         if "Small" in model_selection:
             model_size = "1.5B"
+        elif "4-bit" in model_selection:
+            model_size = "Large (4-bit)"
         else:  # Large
             model_size = "Large"
     else:  # Qwen3
@@ -841,7 +1044,11 @@ def generate_audio(sample_name, text_to_generate, language, seed, model_selectio
             import warnings
             import logging
 
-            model_path = f"FranckyB/VibeVoice-{model_size}"
+            # Map model_size to valid HuggingFace repo path
+            if model_size == "Large (4-bit)":
+                model_path = "FranckyB/VibeVoice-Large-4bit"
+            else:
+                model_path = f"FranckyB/VibeVoice-{model_size}"
 
             # Suppress tokenizer mismatch warning
             prev_level = logging.getLogger("transformers.tokenization_utils_base").level
@@ -1001,6 +1208,50 @@ def extract_style_instructions(text):
     return clean_text, combined_instruct
 
 
+def preprocess_conversation_script(script):
+    """Add [1]: prefix to lines that don't have a speaker label, or add missing colon.
+
+    This prevents errors when users forget to add speaker labels or colons.
+    Examples:
+        "Hey there" -> "[1]: Hey there"
+        "[1]Hey there" -> "[1]: Hey there"
+        "[1]: Hey there" -> "[1]: Hey there" (unchanged)
+    """
+    if not script or not script.strip():
+        return script
+
+    lines = []
+    for line in script.strip().split('\n'):
+        line = line.strip()
+        if not line:
+            lines.append(line)
+            continue
+
+        # Check if line has a speaker label like [N] or [N]:
+        has_label = False
+        if line.startswith('[') and ']' in line:
+            bracket_end = line.index(']')
+            after_bracket = line[bracket_end + 1:].strip()
+
+            # If there's content after bracket
+            if after_bracket:
+                if not after_bracket.startswith(':'):
+                    # Add missing colon: "[1]Hey" -> "[1]: Hey"
+                    line = line[:bracket_end + 1] + ': ' + after_bracket
+                has_label = True
+            else:
+                # Bracket but no content after: "[1]" - treat as no label
+                has_label = False
+
+        # If no valid label, add [1]:
+        if not has_label:
+            line = f"[1]: {line}"
+
+        lines.append(line)
+
+    return '\n'.join(lines)
+
+
 def generate_custom_voice(text_to_generate, language, speaker, instruct, seed, model_size="1.7B", progress=gr.Progress()):
     """Generate audio using the CustomVoice model with premium speakers."""
     if not text_to_generate or not text_to_generate.strip():
@@ -1082,13 +1333,19 @@ def generate_with_trained_model(text_to_generate, language, speaker_name, checkp
 
         progress(0.1, desc=f"Loading trained model from {checkpoint_path}...")
 
+        # Simple rule: if model differs from last, unload everything
+        model_id = f"trained_{checkpoint_path}"
+        check_and_unload_if_different(model_id)
+
         # Load the trained model checkpoint
         from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
-        model = Qwen3TTSModel.from_pretrained(
+        model, attn_used = load_model_with_attention(
+            Qwen3TTSModel,
             checkpoint_path,
+            user_preference=_user_config.get("attention_mechanism", "auto"),
             device_map="cuda:0",
             dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
+            low_cpu_mem_usage=_user_config.get("low_cpu_mem_usage", False)
         )
 
         progress(0.3, desc="Generating with trained voice...")
@@ -1132,17 +1389,23 @@ def generate_with_trained_model(text_to_generate, language, speaker_name, checkp
         return None, f"❌ Error generating audio: {str(e)}"
 
 
-def generate_conversation(conversation_data, pause_duration, language, seed, model_size="1.7B", progress=gr.Progress()):
-    """Generate a multi-speaker conversation from structured data.
+def generate_conversation(conversation_data, pause_linebreak, pause_period, pause_comma, pause_question, pause_hyphen, language, seed, model_size="1.7B", progress=gr.Progress()):
+    """Generate a multi-speaker conversation from structured data with granular pause control.
 
     conversation_data is a string with format:
     Speaker1: Line of dialogue
     Speaker2: Another line
     Speaker1: Response
     ...
+
+    Supports inline [break=X.X] markers for custom pauses.
+    Automatically adds pauses after periods, commas, questions, and hyphens based on settings.
     """
     if not conversation_data or not conversation_data.strip():
         return None, "❌ Please enter conversation lines."
+
+    # Preprocess script to add [1]: to lines without speaker labels
+    conversation_data = preprocess_conversation_script(conversation_data)
 
     try:
         # Speaker number to name mapping from CUSTOM_VOICE_SPEAKERS
@@ -1204,9 +1467,10 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
         progress(0.1, desc=f"Loading CustomVoice model ({model_size})...")
         model = get_custom_voice_model(model_size)
 
-        # Generate all lines
-        all_wavs = []
+        # Generate all lines with inline pause markers
+        all_segments = []  # List of (wav, pause_after) tuples
         sr = None
+        pause_pattern = re.compile(r'\[break=([\d\.]+)\]')
 
         for i, (speaker, text) in enumerate(lines):
             progress_val = 0.1 + (0.8 * i / len(lines))
@@ -1214,32 +1478,69 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
             # Extract style instructions from parentheses
             clean_text, style_instruct = extract_style_instructions(text)
 
+            # Insert pause markers based on punctuation (before extracting inline breaks)
+            if pause_period > 0:
+                clean_text = re.sub(r'\.(?!\d)', f'. [break={pause_period}]', clean_text)
+            if pause_comma > 0:
+                clean_text = re.sub(r',(?!\d)', f', [break={pause_comma}]', clean_text)
+            if pause_question > 0:
+                clean_text = re.sub(r'\?(?!\d)', f'? [break={pause_question}]', clean_text)
+            if pause_hyphen > 0:
+                clean_text = re.sub(r'-(?!\d)', f'- [break={pause_hyphen}]', clean_text)
+
+            # Split text by pause markers
+            parts = pause_pattern.split(clean_text)
+
             if style_instruct:
                 progress(progress_val, desc=f"Line {i + 1}/{len(lines)} [{style_instruct[:15]}...]")
             else:
                 progress(progress_val, desc=f"Line {i + 1}/{len(lines)} ({speaker})")
 
-            # Generate with optional style instructions
-            kwargs = {
-                "text": clean_text,
-                "language": language if language != "Auto" else "Auto",
-                "speaker": speaker,
-            }
-            if style_instruct:
-                kwargs["instruct"] = style_instruct
+            # Process each segment between pause markers
+            for j in range(0, len(parts), 2):
+                segment_text = parts[j].strip()
+                if not segment_text:
+                    continue
 
-            wavs, sr = model.generate_custom_voice(**kwargs)
-            all_wavs.append(wavs[0])
+                # Remove any pause markers from the text before generation
+                segment_text = pause_pattern.sub('', segment_text).strip()
+                if not segment_text:
+                    continue
 
-        # Concatenate with pauses
+                # Generate audio for this segment
+                kwargs = {
+                    "text": segment_text,
+                    "language": language if language != "Auto" else "Auto",
+                    "speaker": speaker,
+                }
+                if style_instruct:
+                    kwargs["instruct"] = style_instruct
+
+                wavs, sr = model.generate_custom_voice(**kwargs)
+
+                # Get pause duration after this segment
+                segment_pause = 0.0
+                if j + 1 < len(parts):  # There's a pause marker after this segment
+                    try:
+                        segment_pause = float(parts[j + 1])
+                    except ValueError:
+                        pass
+
+                all_segments.append((wavs[0], segment_pause))
+
+            # Add linebreak pause after last segment of this line (except for last line)
+            if i < len(lines) - 1 and all_segments:
+                last_wav, last_pause = all_segments[-1]
+                all_segments[-1] = (last_wav, last_pause + pause_linebreak)
+
+        # Concatenate segments with their pauses
         progress(0.9, desc="Stitching conversation...")
-        pause_samples = int(sr * pause_duration)
-        pause = np.zeros(pause_samples)
-
         conversation_audio = []
-        for i, wav in enumerate(all_wavs):
+        for wav, pause_duration in all_segments:
             conversation_audio.append(wav)
-            if i < len(all_wavs) - 1:  # Don't add pause after last line
+            if pause_duration > 0:
+                pause_samples = int(sr * pause_duration)
+                pause = np.zeros(pause_samples)
                 conversation_audio.append(pause)
 
         final_audio = np.concatenate(conversation_audio)
@@ -1258,9 +1559,15 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
             f"Model: CustomVoice {model_size}\n"
             f"Language: {language}\n"
             f"Seed: {seed}\n"
-            f"Pause Duration: {pause_duration}s\n"
+            f"Pause Settings:\n"
+            f"  - Linebreak: {pause_linebreak}s\n"
+            f"  - Period: {pause_period}s\n"
+            f"  - Comma: {pause_comma}s\n"
+            f"  - Question: {pause_question}s\n"
+            f"  - Hyphen: {pause_hyphen}s\n"
             f"Speakers: {', '.join(speakers_used)}\n"
             f"Lines: {len(lines)}\n"
+            f"Segments: {len(all_segments)}\n"
             f"\n"
             f"--- Script ---\n"
             f"{conversation_data.strip()}\n"
@@ -1275,10 +1582,185 @@ def generate_conversation(conversation_data, pause_duration, language, seed, mod
         return None, f"❌ Error generating conversation: {str(e)}"
 
 
+def generate_conversation_base(conversation_data, voice_samples_dict, pause_linebreak, pause_period, pause_comma, pause_question, pause_hyphen, language, seed, model_size="0.6B", progress=gr.Progress()):
+    """Generate a multi-speaker conversation using Qwen Base model with custom voice samples and granular pause control.
+
+    Similar to DialogueInferenceNode - uses voice cloning with custom samples (up to 8 speakers).
+    """
+    if not conversation_data or not conversation_data.strip():
+        return None, "❌ Please enter conversation lines."
+
+    if not voice_samples_dict:
+        return None, "❌ Please select at least one voice sample."
+
+    # Preprocess script to add [1]: to lines without speaker labels
+    conversation_data = preprocess_conversation_script(conversation_data)
+
+    try:
+        # Parse conversation lines - support [N]: format only (1-based)
+        lines = []
+        for line in conversation_data.strip().split('\n'):
+            line = line.strip()
+            if not line or ':' not in line:
+                continue
+
+            # Check if format is [N]:
+            if line.startswith('[') and ']' in line:
+                bracket_end = line.index(']')
+                bracket_content = line[1:bracket_end].strip()
+                text = line[bracket_end + 1:].lstrip(':').strip()
+
+                # Try [N]: format (1-based for user convenience)
+                if bracket_content.isdigit():
+                    speaker_num = int(bracket_content)
+                    if 1 <= speaker_num <= 8:
+                        speaker_key = f"Speaker{speaker_num}"
+                        if speaker_key in voice_samples_dict:
+                            if text:
+                                sample_data = voice_samples_dict[speaker_key]
+                                lines.append((speaker_key, sample_data["wav_path"], sample_data["ref_text"], text))
+                        continue
+
+        if not lines:
+            return None, "❌ No valid conversation lines found. Use format: [N]: Text (where N is 1-8)"
+
+        # Set seed
+        seed = int(seed) if seed is not None else -1
+        if seed < 0:
+            seed = random.randint(0, 2147483647)
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+        progress(0.1, desc=f"Loading Base model ({model_size})...")
+        model = get_tts_model(model_size)
+
+        # Generate all segments with inline pause markers
+        all_segments = []  # List of (wav, pause_after) tuples
+        sr = None
+        pause_pattern = re.compile(r'\[break=([\d\.]+)\]')
+
+        for i, (speaker_key, voice_sample_path, ref_text, text) in enumerate(lines):
+            progress_val = 0.1 + (0.8 * i / len(lines))
+            progress(progress_val, desc=f"Line {i + 1}/{len(lines)} ({speaker_key})")
+
+            # Remove style instructions in parentheses (Base model doesn't use them)
+            text = re.sub(r'\s*\([^)]+\)\s*', ' ', text).strip()
+
+            # Insert pause markers based on punctuation
+            if pause_period > 0:
+                text = re.sub(r'\.(?!\d)', f'. [break={pause_period}]', text)
+            if pause_comma > 0:
+                text = re.sub(r',(?!\d)', f', [break={pause_comma}]', text)
+            if pause_question > 0:
+                text = re.sub(r'\?(?!\d)', f'? [break={pause_question}]', text)
+            if pause_hyphen > 0:
+                text = re.sub(r'-(?!\d)', f'- [break={pause_hyphen}]', text)
+
+            # Split text by pause markers
+            parts = pause_pattern.split(text)
+
+            # Process each segment between pause markers
+            for j in range(0, len(parts), 2):
+                segment_text = parts[j].strip()
+                if not segment_text:
+                    continue
+
+                # Remove any pause markers from the text before generation
+                segment_text = pause_pattern.sub('', segment_text).strip()
+                if not segment_text:
+                    continue
+
+                # Generate audio for this segment using voice cloning
+                wavs, sr = model.generate_voice_clone(
+                    text=segment_text,
+                    language=language if language != "Auto" else "auto",
+                    ref_audio=voice_sample_path,
+                    ref_text=ref_text
+                )
+
+                # Get pause duration after this segment
+                segment_pause = 0.0
+                if j + 1 < len(parts):  # There's a pause marker after this segment
+                    try:
+                        segment_pause = float(parts[j + 1])
+                    except ValueError:
+                        pass
+
+                all_segments.append((wavs[0], segment_pause))
+
+            # Add linebreak pause after last segment of this line (except for last line)
+            if i < len(lines) - 1 and all_segments:
+                last_wav, last_pause = all_segments[-1]
+                all_segments[-1] = (last_wav, last_pause + pause_linebreak)
+
+        # Concatenate segments with their pauses
+        progress(0.9, desc="Stitching conversation...")
+        conversation_audio = []
+        for wav, pause_duration in all_segments:
+            conversation_audio.append(wav)
+            if pause_duration > 0:
+                pause_samples = int(sr * pause_duration)
+                pause = np.zeros(pause_samples)
+                conversation_audio.append(pause)
+
+        final_audio = np.concatenate(conversation_audio)
+
+        # Save
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = OUTPUT_DIR / f"conversation_qwen_base_{timestamp}.wav"
+        sf.write(str(output_file), final_audio, sr)
+
+        # Save metadata
+        metadata_file = output_file.with_suffix(".txt")
+        speakers_used = list(set(k for k, _, _, _ in lines))
+        metadata = (
+            f"Generated: {timestamp}\n"
+            f"Type: Qwen3-TTS Conversation (Base Model + Custom Voices)\n"
+            f"Model: Base {model_size}\n"
+            f"Language: {language}\n"
+            f"Seed: {seed}\n"
+            f"Pause Settings:\n"
+            f"  - Linebreak: {pause_linebreak}s\n"
+            f"  - Period: {pause_period}s\n"
+            f"  - Comma: {pause_comma}s\n"
+            f"  - Question: {pause_question}s\n"
+            f"  - Hyphen: {pause_hyphen}s\n"
+            f"Speakers: {', '.join(speakers_used)}\n"
+            f"Voice Samples:\n"
+        )
+        for speaker_key in sorted(set(k for k, _, _, _ in lines)):
+            sample_data = voice_samples_dict[speaker_key]
+            sample_path = sample_data["wav_path"] if isinstance(sample_data, dict) else sample_data
+            metadata += f"  - {speaker_key}: {Path(sample_path).name}\n"
+        metadata += (
+            f"Lines: {len(lines)}\n"
+            f"Segments: {len(all_segments)}\n"
+            f"\n"
+            f"--- Script ---\n"
+            f"{conversation_data.strip()}\n"
+        )
+        metadata_file.write_text(metadata, encoding="utf-8")
+
+        progress(1.0, desc="Done!")
+        duration = len(final_audio) / sr
+        return str(output_file), f"✅ Conversation saved: {output_file.name}\n📝 {len(lines)} lines | ⏱️ {duration:.1f}s | 🎲 Seed: {seed} | 🤖 Base {model_size}"
+
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error in generate_conversation_base:\n{error_detail}")
+        return None, f"❌ Error generating conversation: {str(e)}"
+
+
 def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5B", cfg_scale=3.0, seed=-1, progress=gr.Progress()):
     """Generate long-form multi-speaker audio using VibeVoice TTS (up to 90 minutes)."""
     if not script_text or not script_text.strip():
         return None, "❌ Please enter a script."
+
+    # Preprocess script to add [1]: to lines without speaker labels
+    script_text = preprocess_conversation_script(script_text)
 
     try:
         # Set seed
@@ -1298,7 +1780,11 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
         import warnings
         import logging
 
-        model_path = f"FranckyB/VibeVoice-{model_size}"
+        # Map model_size to valid HuggingFace repo path
+        if model_size == "Large (4-bit)":
+            model_path = "FranckyB/VibeVoice-Large-4bit"
+        else:
+            model_path = f"FranckyB/VibeVoice-{model_size}"
 
         # Suppress tokenizer mismatch warning
         prev_level = logging.getLogger("transformers.tokenization_utils_base").level
@@ -1365,7 +1851,10 @@ def generate_vibevoice_longform(script_text, voice_samples_dict, model_size="1.5
         for i in range(1, 5):  # Speaker1 through Speaker4
             speaker_key = f"Speaker{i}"
             if speaker_key in voice_samples_dict and voice_samples_dict[speaker_key]:
-                available_samples.append((speaker_key, voice_samples_dict[speaker_key]))
+                # Extract wav_path from dict (for compatibility with Qwen Base format)
+                sample_data = voice_samples_dict[speaker_key]
+                wav_path = sample_data["wav_path"] if isinstance(sample_data, dict) else sample_data
+                available_samples.append((speaker_key, wav_path))
 
         if not available_samples:
             return None, "❌ Please provide at least one voice sample (Speaker1)."
@@ -2890,10 +3379,16 @@ def create_ui():
         # Hidden trigger for confirmation modal - visible but hidden via CSS
         confirm_trigger = gr.Textbox(label="Confirm Trigger", value="", elem_id="confirm-trigger")
 
-        gr.Markdown("""
-        # 🎙️ Voice Clone Studio
-        <p style="font-size: 0.9em; color: #ffffff; margin-top: -10px;">  Powered by Qwen3-TTS, VibeVoice and Whisper</p>
-        """)
+        # Always-visible unload button
+        with gr.Row():
+            with gr.Column(scale=15):
+                gr.Markdown("""
+                    # 🎙️ Voice Clone Studio
+                    <p style="font-size: 0.9em; color: #ffffff; margin-top: -10px;">  Powered by Qwen3-TTS, VibeVoice and Whisper</p>
+                    """)
+            with gr.Column(scale=1):
+                unload_all_btn = gr.Button("Clear VRAM", size="sm", variant="secondary")
+                unload_status = gr.Markdown(" ", visible=True)
 
         with gr.Tabs():
             # ============== TAB 1: Voice Clone ==============
@@ -2945,28 +3440,28 @@ def create_ui():
                             lines=6
                         )
 
-                        with gr.Row():
+                        # Language dropdown (hidden for VibeVoice models)
+                        is_qwen_initial = "Qwen" in _user_config.get("voice_clone_model", DEFAULT_VOICE_CLONE_MODEL)
+                        with gr.Row(visible=is_qwen_initial) as language_row:
                             language_dropdown = gr.Dropdown(
                                 choices=LANGUAGES,
                                 value=_user_config.get("language", "Auto"),
                                 label="Language",
-                                info="Language of the text to generate",
-                                scale=2
-                            )
-                            seed_input = gr.Number(
-                                label="Seed",
-                                value=-1,
-                                precision=0,
-                                info="-1 for random",
-                                scale=1
                             )
 
-                        clone_model_dropdown = gr.Dropdown(
-                            choices=VOICE_CLONE_OPTIONS,
-                            value=_user_config.get("voice_clone_model", DEFAULT_VOICE_CLONE_MODEL),
-                            label="Engine & Model",
-                            info="Choose between Qwen3 (fast, cached prompts) or VibeVoice (high-quality, long-form capable)"
-                        )
+                        with gr.Row():
+                            clone_model_dropdown = gr.Dropdown(
+                                choices=VOICE_CLONE_OPTIONS,
+                                value=_user_config.get("voice_clone_model", DEFAULT_VOICE_CLONE_MODEL),
+                                label="Engine & Model (Qwen3 or VibeVoice)",
+                                scale=4
+                            )
+                            seed_input = gr.Number(
+                                label="Seed (-1 for random)",
+                                value=-1,
+                                precision=0,
+                                scale=1
+                            )
 
                         generate_btn = gr.Button("Generate Audio", variant="primary", size="lg")
 
@@ -3035,6 +3530,23 @@ def create_ui():
                     generate_audio,
                     inputs=[sample_dropdown, text_input, language_dropdown, seed_input, clone_model_dropdown],
                     outputs=[output_audio, status_text]
+                )
+
+                # Toggle language visibility based on model selection
+                def toggle_language_visibility(model_selection):
+                    is_qwen = "Qwen" in model_selection
+                    return gr.update(visible=is_qwen)
+
+                clone_model_dropdown.change(
+                    toggle_language_visibility,
+                    inputs=[clone_model_dropdown],
+                    outputs=[language_row]
+                )
+
+                clone_model_dropdown.change(
+                    lambda x: save_preference("voice_clone_model", x),
+                    inputs=[clone_model_dropdown],
+                    outputs=[]
                 )
 
             # ============== TAB 2: Custom Voice ==============
@@ -3157,14 +3669,12 @@ def create_ui():
                                 choices=LANGUAGES,
                                 value=_user_config.get("language", "Auto"),
                                 label="Language",
-                                info="Auto-detect or specify",
                                 scale=2
                             )
                             custom_seed = gr.Number(
-                                label="Seed",
+                                label="Seed (-1 for random)",
                                 value=-1,
                                 precision=0,
-                                info="-1 for random",
                                 scale=1
                             )
 
@@ -3174,7 +3684,7 @@ def create_ui():
                             label="Generated Audio",
                             type="filepath"
                         )
-                        custom_status = gr.Textbox(label="Status", max_lines=3, interactive=False)
+                        custom_status = gr.Textbox(label="Status", max_lines=5, interactive=False)
 
                 # Custom Voice event handlers
                 def extract_speaker_name(selection):
@@ -3251,17 +3761,20 @@ def create_ui():
 
             # ============== TAB 3: Unified Conversation ==============
             with gr.TabItem("Conversation"):
-                gr.Markdown("Create Conversation, using Qwen3-TTS or VibeVoice")
+                gr.Markdown("Create Conversation, using VibeVoice, Qwen Base or Qwen CustomVoice")
 
                 # Model selector at top
-                initial_conv_model = _user_config.get("conv_model_type", "Qwen")
-                is_qwen_initial = initial_conv_model == "Qwen"
-                with gr.Row():
-                    conv_model_type = gr.Radio(
-                        choices=["Qwen", "VibeVoice"],
-                        value=initial_conv_model,
-                        label="Conversation Engine",
-                    )
+                initial_conv_model = _user_config.get("conv_model_type", "VibeVoice")
+                is_vibevoice = initial_conv_model == "VibeVoice"
+                is_qwen_base = initial_conv_model == "Qwen Base"
+                is_qwen_custom = initial_conv_model == "Qwen CustomVoice"
+
+                conv_model_type = gr.Radio(
+                    choices=["VibeVoice", "Qwen Base", "Qwen CustomVoice"],
+                    value=initial_conv_model,
+                    show_label=False,
+                    container=False
+                )
 
                 with gr.Row():
                     # Left - Script input and model-specific controls
@@ -3271,14 +3784,17 @@ def create_ui():
                         conversation_script = gr.Textbox(
                             label="Script:",
                             placeholder=dedent("""\
-                                Use [N]: format for speaker labels. Add (style) for emotions:
+                                Use [N]: format for speaker labels (1-4 for VibeVoice, 1-8 for Base, 1-9 for CustomVoice).
+                                Qwen CustomVoice also supports (style) for emotions:
 
                                 [1]: (cheerful) Hey, how's it going?
                                 [2]: (excited) I'm doing great, thanks for asking!
                                 [1]: That's wonderful to hear.
                                 [3]: (curious) Mind if I join this conversation?
 
-                                Style instructions work with Qwen only (VibeVoice ignores them)."""),
+                                VibeVoice: Natural long-form generation.
+                                Base: Your custom voice clips with advanced pause control
+                                CustomVoice: Qwen Preset speakers with style control and Pause Controls"""),
                             lines=18
                         )
 
@@ -3301,47 +3817,131 @@ def create_ui():
                             value=format_help_html(speaker_guide),
                             container=True,   # give it the normal block/card container
                             padding=True,      # match block padding
-                            visible=is_qwen_initial
+                            visible=is_qwen_custom
                         )
 
+                        # Qwen Base voice sample selectors (visible when Qwen Base selected)
+                        with gr.Column(visible=is_qwen_base) as qwen_base_voices_section:
+                            gr.Markdown("### Voice Samples (Up to 8 Speakers)")
+
+                            # Get sample choices once to avoid repeated filesystem scans
+                            available_voice_samples_qwen = get_sample_choices()
+
+                            with gr.Row():
+                                with gr.Column():
+                                    qwen_voice_sample_1 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_1"),
+                                        label="[1] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+                                with gr.Column():
+                                    qwen_voice_sample_2 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_2"),
+                                        label="[2] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+
+                            with gr.Row():
+                                with gr.Column():
+                                    qwen_voice_sample_3 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_3"),
+                                        label="[3] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+                                with gr.Column():
+                                    qwen_voice_sample_4 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_4"),
+                                        label="[4] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+
+                            with gr.Row():
+                                with gr.Column():
+                                    qwen_voice_sample_5 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_5"),
+                                        label="[5] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+                                with gr.Column():
+                                    qwen_voice_sample_6 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_6"),
+                                        label="[6] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+
+                            with gr.Row():
+                                with gr.Column():
+                                    qwen_voice_sample_7 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_7"),
+                                        label="[7] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+                                with gr.Column():
+                                    qwen_voice_sample_8 = gr.Dropdown(
+                                        choices=available_voice_samples_qwen,
+                                        value=_user_config.get("qwen_voice_sample_8"),
+                                        label="[8] Voice Sample",
+                                        info="Select from your prepared samples"
+                                    )
+
+                            # Refresh button for Qwen Base voice samples
+                            refresh_qwen_samples_btn = gr.Button("Refresh Voice Samples", size="md")
+
                         # VibeVoice voice sample selectors (visible when VibeVoice selected)
-                        with gr.Column(visible=not is_qwen_initial) as vibevoice_voices_section:
+                        with gr.Column(visible=is_vibevoice) as vibevoice_voices_section:
                             gr.Markdown("### Voice Samples (Up to 4 Speakers)")
+
+                            # Get sample choices once to avoid repeated filesystem scans
+                            available_voice_samples = get_sample_choices()
 
                             with gr.Row():
                                 with gr.Column():
                                     voice_sample_1 = gr.Dropdown(
-                                        choices=get_sample_choices(),
-                                        label="[1] Voice Sample (Required)",
+                                        choices=available_voice_samples,
+                                        value=_user_config.get("vv_voice_sample_1"),
+                                        label="[1] Voice Sample",
                                         info="Select from your prepared samples"
                                     )
                                 with gr.Column():
                                     voice_sample_2 = gr.Dropdown(
-                                        choices=get_sample_choices(),
-                                        label="[2] Voice Sample (Optional)",
+                                        choices=available_voice_samples,
+                                        value=_user_config.get("vv_voice_sample_2"),
+                                        label="[2] Voice Sample",
                                         info="Select from your prepared samples"
                                     )
 
                             with gr.Row():
                                 with gr.Column():
                                     voice_sample_3 = gr.Dropdown(
-                                        choices=get_sample_choices(),
-                                        label="[3] Voice Sample (Optional)",
+                                        choices=available_voice_samples,
+                                        value=_user_config.get("vv_voice_sample_3"),
+                                        label="[3] Voice Sample",
                                         info="Select from your prepared samples"
                                     )
                                 with gr.Column():
                                     voice_sample_4 = gr.Dropdown(
-                                        choices=get_sample_choices(),
-                                        label="[4] Voice Sample (Optional)",
+                                        choices=available_voice_samples,
+                                        value=_user_config.get("vv_voice_sample_4"),
+                                        label="[4] Voice Sample",
                                         info="Select from your prepared samples"
                                     )
 
+                            # Refresh button for voice samples
+                            refresh_conv_samples_btn = gr.Button("Refresh Voice Samples", size="md")
+
                     # Right - Settings and output
                     with gr.Column(scale=1):
-                        gr.Markdown("### ⚙️ Settings")
+                        gr.Markdown("### Settings")
 
-                        # Qwen-specific settings
-                        with gr.Column(visible=is_qwen_initial) as qwen_settings:
+                        # Qwen CustomVoice settings
+                        with gr.Column(visible=is_qwen_custom) as qwen_custom_settings:
                             conv_model_size = gr.Dropdown(
                                 choices=MODEL_SIZES_CUSTOM,
                                 value=_user_config.get("conv_model_size", "Large"),
@@ -3349,24 +3949,83 @@ def create_ui():
                                 info="Small = Faster, Large = Better Quality"
                             )
 
-                            conv_pause = gr.Slider(
-                                minimum=0.1,
-                                maximum=2.0,
-                                value=_user_config.get("conv_pause_duration", 0.5),
+                        # Qwen Base settings (custom voice clips)
+                        with gr.Column(visible=is_qwen_base) as qwen_base_settings:
+                            conv_base_model_size = gr.Dropdown(
+                                choices=MODEL_SIZES_BASE,
+                                value=_user_config.get("conv_base_model_size", "Small"),
+                                label="Model Size",
+                                info="Small = Faster, Large = Better Quality"
+                            )
+
+                        # Shared Language and Seed (for both Qwen modes)
+                        with gr.Column(visible=(is_qwen_custom or is_qwen_base)) as qwen_language_seed:
+                            with gr.Row():
+                                conv_language = gr.Dropdown(
+                                    scale=5,
+                                    choices=LANGUAGES,
+                                    value=_user_config.get("language", "Auto"),
+                                    label="Language",
+                                    info="Language for all lines (Auto recommended)"
+                                )
+                                conv_seed = gr.Number(
+                                    label="Seed",
+                                    value=-1,
+                                    precision=0,
+                                    info="(-1 for random)"
+                                )
+
+                        # Shared Pause Controls (for both Qwen modes)
+                        with gr.Column(visible=(is_qwen_custom or is_qwen_base)) as qwen_pause_controls:
+                            gr.Markdown("**Pause Controls**")
+
+                            conv_pause_linebreak = gr.Slider(
+                                minimum=0.0,
+                                maximum=3.0,
+                                value=_user_config.get("conv_pause_linebreak", 0.5),
                                 step=0.1,
-                                label="Pause Between Lines (seconds)",
+                                label="Pause Between Lines",
                                 info="Silence between each speaker turn"
                             )
 
-                            conv_language = gr.Dropdown(
-                                choices=LANGUAGES,
-                                value=_user_config.get("language", "Auto"),
-                                label="Language",
-                                info="Language for all lines (Auto recommended)"
-                            )
+                            with gr.Row():
+                                conv_pause_period = gr.Slider(
+                                    minimum=0.0,
+                                    maximum=2.0,
+                                    value=_user_config.get("conv_pause_period", 0.4),
+                                    step=0.1,
+                                    label="After Period (.)",
+                                    info="Pause after periods"
+                                )
+                                conv_pause_comma = gr.Slider(
+                                    minimum=0.0,
+                                    maximum=2.0,
+                                    value=_user_config.get("conv_pause_comma", 0.2),
+                                    step=0.1,
+                                    label="After Comma (,)",
+                                    info="Pause after commas"
+                                )
+
+                            with gr.Row():
+                                conv_pause_question = gr.Slider(
+                                    minimum=0.0,
+                                    maximum=2.0,
+                                    value=_user_config.get("conv_pause_question", 0.6),
+                                    step=0.1,
+                                    label="After Question (?)",
+                                    info="Pause after questions"
+                                )
+                                conv_pause_hyphen = gr.Slider(
+                                    minimum=0.0,
+                                    maximum=2.0,
+                                    value=_user_config.get("conv_pause_hyphen", 0.3),
+                                    step=0.1,
+                                    label="After Hyphen (-)",
+                                    info="Pause after hyphens"
+                                )
 
                         # VibeVoice-specific settings
-                        with gr.Column(visible=not is_qwen_initial) as vibevoice_settings:
+                        with gr.Column(visible=is_vibevoice) as vibevoice_settings:
                             longform_model_size = gr.Dropdown(
                                 choices=MODEL_SIZES_VIBEVOICE,
                                 value=_user_config.get("vibevoice_model_size", "Large"),
@@ -3384,28 +4043,31 @@ def create_ui():
                             )
 
                         # Shared settings
-                        conv_seed = gr.Number(
-                            label="Seed",
-                            value=-1,
-                            precision=0,
-                            info="-1 for random"
-                        )
-
                         conv_generate_btn = gr.Button("Generate Conversation", variant="primary", size="lg")
 
-                        gr.Markdown("### Output")
                         conv_output_audio = gr.Audio(
                             label="Generated Conversation",
                             type="filepath"
                         )
-                        conv_status = gr.Textbox(label="Status", interactive=False, max_lines=3)
+                        conv_status = gr.Textbox(label="Status", interactive=False, max_lines=5)
 
                         # Model-specific tips
-                        qwen_tips_text = dedent("""\
-                        **Qwen Tips:**
+                        qwen_custom_tips_text = dedent("""\
+                        **Qwen CustomVoice Tips:**
                         - Fast generation with preset voices
                         - Up to 9 different speakers
+                        - Tip: Use `[break=1.5]` inline for custom pauses
                         - Each voice optimized for their native language
+                        - Style instructions: (cheerful), (sad), (excited), etc.
+                        """)
+
+                        qwen_base_tips_text = dedent("""\
+                        **Qwen Base Tips:**
+                        - Use your own custom voice samples
+                        - Up to 8 different speakers
+                        - Tip: Use `[break=1.5]` inline for custom pauses
+                        - Advanced pause control (periods, commas, questions, hyphens)
+                        - Prepare 3-10 second voice samples in samples/ folder
                         """)
 
                         vibevoice_tips_text = dedent("""\
@@ -3414,55 +4076,94 @@ def create_ui():
                         - Up to 4 speakers with custom voices
                         - May spontaneously add background music/sounds
                         - Longer scripts work best with Large model
+                        - Natural conversation flow (no manual pause control)
                         """)
 
-                        qwen_tips = gr.HTML(
-                            value=format_help_html(qwen_tips_text),
-                            container=True,   # give it the normal block/card container
-                            padding=True,      # match block padding
-                            visible=is_qwen_initial
+                        qwen_custom_tips = gr.HTML(
+                            value=format_help_html(qwen_custom_tips_text),
+                            container=True,
+                            padding=True,
+                            visible=is_qwen_custom
+                        )
+
+                        qwen_base_tips = gr.HTML(
+                            value=format_help_html(qwen_base_tips_text),
+                            container=True,
+                            padding=True,
+                            visible=is_qwen_base
                         )
 
                         vibevoice_tips = gr.HTML(
                             value=format_help_html(vibevoice_tips_text),
-                            container=True,   # give it the normal block/card container
-                            padding=True,      # match block padding
-                            visible=not is_qwen_initial
+                            container=True,
+                            padding=True,
+                            visible=is_vibevoice
                         )
 
                 # Helper function for voice samples
-                def prepare_voice_samples_dict(v1, v2, v3, v4):
-                    """Prepare voice samples dictionary for generation."""
+                def prepare_voice_samples_dict(v1, v2=None, v3=None, v4=None, v5=None, v6=None, v7=None, v8=None):
+                    """Prepare voice samples dictionary for generation (supports 4 or 8 speakers)."""
                     samples = {}
                     available_samples = get_available_samples()
 
-                    # Convert sample names to file paths
-                    for speaker_num, sample_name in [("Speaker1", v1), ("Speaker2", v2), ("Speaker3", v3), ("Speaker4", v4)]:
+                    # Convert sample names to file paths and ref text
+                    voice_inputs = [("Speaker1", v1), ("Speaker2", v2), ("Speaker3", v3), ("Speaker4", v4),
+                                    ("Speaker5", v5), ("Speaker6", v6), ("Speaker7", v7), ("Speaker8", v8)]
+
+                    for speaker_num, sample_name in voice_inputs:
                         if sample_name:
                             for s in available_samples:
                                 if s["name"] == sample_name:
-                                    samples[speaker_num] = s["wav_path"]
+                                    samples[speaker_num] = {
+                                        "wav_path": s["wav_path"],
+                                        "ref_text": s["ref_text"]
+                                    }
                                     break
                     return samples
 
                 # Unified generate handler
                 def unified_conversation_generate(
                     model_type, script,
-                    # Qwen params
-                    qwen_lang, qwen_pause, qwen_model_size,
+                    # Qwen CustomVoice params
+                    qwen_custom_pause_linebreak, qwen_custom_pause_period, qwen_custom_pause_comma,
+                    qwen_custom_pause_question, qwen_custom_pause_hyphen, qwen_custom_model_size,
+                    # Qwen Base params
+                    qwen_base_v1, qwen_base_v2, qwen_base_v3, qwen_base_v4, qwen_base_v5, qwen_base_v6, qwen_base_v7, qwen_base_v8,
+                    qwen_base_pause_linebreak, qwen_base_pause_period, qwen_base_pause_comma, qwen_base_pause_question,
+                    qwen_base_pause_hyphen, qwen_base_model_size,
+                    # Shared Qwen params
+                    qwen_lang, qwen_seed,
                     # VibeVoice params
                     vv_v1, vv_v2, vv_v3, vv_v4, vv_model_size, vv_cfg,
                     # Shared
                     seed, progress=gr.Progress()
                 ):
                     """Route to appropriate generation function based on model type."""
-                    if model_type == "Qwen":
+                    if model_type == "Qwen CustomVoice":
                         # Map UI labels to actual model sizes
-                        qwen_size = "1.7B" if qwen_model_size == "Large" else "0.6B"
-                        return generate_conversation(script, qwen_pause, qwen_lang, seed, qwen_size)
+                        qwen_size = "1.7B" if qwen_custom_model_size == "Large" else "0.6B"
+                        return generate_conversation(script, qwen_custom_pause_linebreak, qwen_custom_pause_period,
+                                                     qwen_custom_pause_comma, qwen_custom_pause_question,
+                                                     qwen_custom_pause_hyphen, qwen_lang, qwen_seed, qwen_size)
+                    elif model_type == "Qwen Base":
+                        # Map UI labels to actual model sizes
+                        qwen_size = "1.7B" if qwen_base_model_size == "Large" else "0.6B"
+                        voice_samples = prepare_voice_samples_dict(
+                            qwen_base_v1, qwen_base_v2, qwen_base_v3, qwen_base_v4,
+                            qwen_base_v5, qwen_base_v6, qwen_base_v7, qwen_base_v8
+                        )
+                        return generate_conversation_base(script, voice_samples, qwen_base_pause_linebreak,
+                                                          qwen_base_pause_period, qwen_base_pause_comma,
+                                                          qwen_base_pause_question, qwen_base_pause_hyphen,
+                                                          qwen_lang, qwen_seed, qwen_size, progress)
                     else:  # VibeVoice
                         # Map UI labels to actual model sizes
-                        vv_size = "1.5B" if vv_model_size == "Small" else "Large"
+                        if vv_model_size == "Small":
+                            vv_size = "1.5B"
+                        elif vv_model_size == "Large (4-bit)":
+                            vv_size = "Large (4-bit)"
+                        else:
+                            vv_size = "Large"
                         voice_samples = prepare_voice_samples_dict(vv_v1, vv_v2, vv_v3, vv_v4)
                         return generate_vibevoice_longform(script, voice_samples, vv_size, vv_cfg, seed, progress)
 
@@ -3471,8 +4172,16 @@ def create_ui():
                     unified_conversation_generate,
                     inputs=[
                         conv_model_type, conversation_script,
-                        # Qwen
-                        conv_language, conv_pause, conv_model_size,
+                        # Qwen CustomVoice
+                        conv_pause_linebreak, conv_pause_period, conv_pause_comma,
+                        conv_pause_question, conv_pause_hyphen, conv_model_size,
+                        # Qwen Base
+                        qwen_voice_sample_1, qwen_voice_sample_2, qwen_voice_sample_3, qwen_voice_sample_4,
+                        qwen_voice_sample_5, qwen_voice_sample_6, qwen_voice_sample_7, qwen_voice_sample_8,
+                        conv_pause_linebreak, conv_pause_period, conv_pause_comma,
+                        conv_pause_question, conv_pause_hyphen, conv_base_model_size,
+                        # Shared Qwen
+                        conv_language, conv_seed,
                         # VibeVoice
                         voice_sample_1, voice_sample_2, voice_sample_3, voice_sample_4,
                         longform_model_size, longform_cfg_scale,
@@ -3484,20 +4193,54 @@ def create_ui():
 
                 # Toggle UI based on model selection
                 def toggle_conv_ui(model_type):
-                    is_qwen = model_type == "Qwen"
+                    is_qwen_custom = model_type == "Qwen CustomVoice"
+                    is_qwen_base = model_type == "Qwen Base"
+                    is_vibevoice = model_type == "VibeVoice"
+                    is_qwen = is_qwen_custom or is_qwen_base
                     return {
-                        qwen_speaker_table: gr.update(visible=is_qwen),
-                        vibevoice_voices_section: gr.update(visible=not is_qwen),
-                        qwen_settings: gr.update(visible=is_qwen),
-                        vibevoice_settings: gr.update(visible=not is_qwen),
-                        qwen_tips: gr.update(visible=is_qwen),
-                        vibevoice_tips: gr.update(visible=not is_qwen)
+                        qwen_speaker_table: gr.update(visible=is_qwen_custom),
+                        qwen_base_voices_section: gr.update(visible=is_qwen_base),
+                        vibevoice_voices_section: gr.update(visible=is_vibevoice),
+                        qwen_custom_settings: gr.update(visible=is_qwen_custom),
+                        qwen_base_settings: gr.update(visible=is_qwen_base),
+                        qwen_language_seed: gr.update(visible=is_qwen),
+                        qwen_pause_controls: gr.update(visible=is_qwen),
+                        vibevoice_settings: gr.update(visible=is_vibevoice),
+                        qwen_custom_tips: gr.update(visible=is_qwen_custom),
+                        qwen_base_tips: gr.update(visible=is_qwen_base),
+                        vibevoice_tips: gr.update(visible=is_vibevoice)
                     }
 
                 conv_model_type.change(
                     toggle_conv_ui,
                     inputs=[conv_model_type],
-                    outputs=[qwen_speaker_table, vibevoice_voices_section, qwen_settings, vibevoice_settings, qwen_tips, vibevoice_tips]
+                    outputs=[qwen_speaker_table, qwen_base_voices_section, vibevoice_voices_section,
+                             qwen_custom_settings, qwen_base_settings, qwen_language_seed, qwen_pause_controls, vibevoice_settings,
+                             qwen_custom_tips, qwen_base_tips, vibevoice_tips]
+                )
+
+                # Refresh voice samples handler
+                def refresh_voice_samples():
+                    """Refresh all voice sample dropdowns."""
+                    updated_samples = get_sample_choices()
+                    return [gr.update(choices=updated_samples)] * 4
+
+                def refresh_qwen_voice_samples():
+                    """Refresh Qwen Base voice sample dropdowns."""
+                    updated_samples = get_sample_choices()
+                    return [gr.update(choices=updated_samples)] * 8
+
+                refresh_conv_samples_btn.click(
+                    refresh_voice_samples,
+                    inputs=[],
+                    outputs=[voice_sample_1, voice_sample_2, voice_sample_3, voice_sample_4]
+                )
+
+                refresh_qwen_samples_btn.click(
+                    refresh_qwen_voice_samples,
+                    inputs=[],
+                    outputs=[qwen_voice_sample_1, qwen_voice_sample_2, qwen_voice_sample_3, qwen_voice_sample_4,
+                             qwen_voice_sample_5, qwen_voice_sample_6, qwen_voice_sample_7, qwen_voice_sample_8]
                 )
 
             # ============== TAB 4: Voice Design ==============
@@ -3526,14 +4269,12 @@ def create_ui():
                                 choices=LANGUAGES,
                                 value=_user_config.get("language", "Auto"),
                                 label="Language",
-                                info="Language of the text to generate",
                                 scale=2
                             )
                             design_seed = gr.Number(
-                                label="Seed",
+                                label="Seed (-1 for random)",
                                 value=-1,
                                 precision=0,
-                                info="-1 for random",
                                 scale=1
                             )
 
@@ -4108,11 +4849,11 @@ def create_ui():
                 )
 
                 # Toggle language dropdown based on transcribe model
-                def toggle_language_dropdown(model):
+                def toggle_finetune_transcribe_settings(model):
                     return gr.update(visible=(model == "Whisper"))
 
                 finetune_transcribe_model.change(
-                    toggle_language_dropdown,
+                    toggle_finetune_transcribe_settings,
                     inputs=[finetune_transcribe_model],
                     outputs=[finetune_transcribe_lang]
                 )
@@ -4153,7 +4894,6 @@ def create_ui():
                         speaker_name_input = gr.Textbox(
                             label="Speaker Name",
                             value="speaker",
-                            info="Name for the trained voice model",
                             interactive=True
                         )
 
@@ -4332,6 +5072,169 @@ def create_ui():
                 # Event handler for radio selection
                 help_topic.change(fn=show_help, inputs=help_topic, outputs=help_content)
 
+            # ============== TAB 10: Settings ==============
+            with gr.TabItem("⚙️"):
+                gr.Markdown("# ⚙️ Settings")
+                gr.Markdown("Configure global application settings")
+
+                with gr.Column():
+                    gr.Markdown("### Model Loading")
+
+                    settings_low_cpu_mem = gr.Checkbox(
+                        label="Low CPU Memory Usage (Slower loading time)",
+                        value=_user_config.get("low_cpu_mem_usage", False),
+                        info="Reduces CPU RAM usage when loading models by loading weights in smaller chunks. Works with all Qwen and VibeVoice models. Tradeoff: slightly slower model loading time."
+                    )
+
+                    settings_attention_mechanism = gr.Dropdown(
+                        label="Attention Mechanism",
+                        choices=["auto", "sage_attn", "flash_attention_2", "sdpa", "eager"],
+                        value=_user_config.get("attention_mechanism", "auto"),
+                        info="Choose attention implementation. Auto = fastest available. sage_attn (fastest, pip install sageattention) → flash_attention_2 (fast, pip install flash-attn) → sdpa (medium, built-in) → eager (slowest, works without CUDA)"
+                    )
+
+                    gr.Markdown("---")
+                    gr.Markdown("### Folder Paths")
+                    gr.Markdown("Configure where files are stored. Changes apply after clicking **Apply Changes**.")
+
+                    # Default folder paths
+                    default_folders = {
+                        "samples": "samples",
+                        "output": "output",
+                        "datasets": "datasets",
+                        "temp": "temp",
+                        "models": "models"
+                    }
+
+                    # Row 1: Samples and Output folders
+                    with gr.Row():
+                        with gr.Column():
+                            settings_samples_folder = gr.Textbox(
+                                label="Voice Samples Folder",
+                                value=_user_config.get("samples_folder", default_folders["samples"]),
+                                info="Folder for voice sample files (.wav + .json)"
+                            )
+                            reset_samples_btn = gr.Button("Reset", size="sm")
+
+                        with gr.Column():
+                            settings_output_folder = gr.Textbox(
+                                label="Output Folder",
+                                value=_user_config.get("output_folder", default_folders["output"]),
+                                info="Folder for generated audio files"
+                            )
+                            reset_output_btn = gr.Button("Reset", size="sm")
+
+                    # Row 2: Datasets and Models folders
+                    with gr.Row():
+                        with gr.Column():
+                            settings_datasets_folder = gr.Textbox(
+                                label="Datasets Folder",
+                                value=_user_config.get("datasets_folder", default_folders["datasets"]),
+                                info="Folder for training/finetuning datasets"
+                            )
+                            reset_datasets_btn = gr.Button("Reset", size="sm")
+
+                        with gr.Column():
+                            settings_models_folder = gr.Textbox(
+                                label="Models Cache Folder",
+                                value=_user_config.get("models_folder", default_folders["models"]),
+                                info="Folder for downloaded model files (HuggingFace cache)"
+                            )
+                            reset_models_btn = gr.Button("Reset", size="sm")
+
+                with gr.Column():
+                    apply_folders_btn = gr.Button("Apply Changes", variant="primary", size="lg")
+                    settings_folder_status = gr.Textbox(
+                        label="Status",
+                        interactive=False,
+                        max_lines=10
+                    )
+
+                # Save low CPU memory setting
+                settings_low_cpu_mem.change(
+                    lambda x: save_preference("low_cpu_mem_usage", x),
+                    inputs=[settings_low_cpu_mem],
+                    outputs=[]
+                )
+
+                # Save attention mechanism setting
+                settings_attention_mechanism.change(
+                    lambda x: save_preference("attention_mechanism", x),
+                    inputs=[settings_attention_mechanism],
+                    outputs=[]
+                )
+
+                # Reset button handlers
+                def reset_folder(folder_key):
+                    return default_folders[folder_key]
+
+                reset_samples_btn.click(
+                    lambda: reset_folder("samples"),
+                    outputs=[settings_samples_folder]
+                )
+
+                reset_output_btn.click(
+                    lambda: reset_folder("output"),
+                    outputs=[settings_output_folder]
+                )
+
+                reset_datasets_btn.click(
+                    lambda: reset_folder("datasets"),
+                    outputs=[settings_datasets_folder]
+                )
+
+                reset_models_btn.click(
+                    lambda: reset_folder("models"),
+                    outputs=[settings_models_folder]
+                )
+
+                # Apply folder changes
+                def apply_folder_changes(samples, output, datasets, models):
+                    global SAMPLES_DIR, OUTPUT_DIR, DATASETS_DIR
+
+                    try:
+                        # Get base directory (where the script is)
+                        base_dir = Path(__file__).parent
+
+                        # Update paths
+                        new_samples = base_dir / samples
+                        new_output = base_dir / output
+                        new_datasets = base_dir / datasets
+                        new_models = base_dir / models
+
+                        # Create directories if they don't exist
+                        new_samples.mkdir(exist_ok=True)
+                        new_output.mkdir(exist_ok=True)
+                        new_datasets.mkdir(exist_ok=True)
+                        new_models.mkdir(exist_ok=True)
+
+                        # Update global variables
+                        SAMPLES_DIR = new_samples
+                        OUTPUT_DIR = new_output
+                        DATASETS_DIR = new_datasets
+
+                        # Set HuggingFace cache environment variable
+                        import os
+                        os.environ['HF_HOME'] = str(new_models)
+
+                        # Save to config
+                        _user_config["samples_folder"] = samples
+                        _user_config["output_folder"] = output
+                        _user_config["datasets_folder"] = datasets
+                        _user_config["models_folder"] = models
+                        save_config(_user_config)
+
+                        return f"✅ Folder paths updated successfully!\n\nSamples: {new_samples}\nOutput: {new_output}\nDatasets: {new_datasets}\nModels: {new_models}\n\nNote: Restart the app to fully apply changes to all components."
+
+                    except Exception as e:
+                        return f"❌ Error applying changes: {str(e)}"
+
+                apply_folders_btn.click(
+                    apply_folder_changes,
+                    inputs=[settings_samples_folder, settings_output_folder, settings_datasets_folder, settings_models_folder],
+                    outputs=[settings_folder_status]
+                )
+
         # ============== Config Auto-Save ==============
         # Save preferences when users change settings
         def save_preference(key, value):
@@ -4375,9 +5278,34 @@ def create_ui():
             outputs=[]
         )
 
-        conv_pause.change(
-            lambda x: save_preference("conv_pause_duration", x),
-            inputs=[conv_pause],
+        # Save conversation pause preferences (shared by CustomVoice and Base)
+        conv_pause_linebreak.change(
+            lambda x: save_preference("conv_pause_linebreak", x),
+            inputs=[conv_pause_linebreak],
+            outputs=[]
+        )
+
+        conv_pause_period.change(
+            lambda x: save_preference("conv_pause_period", x),
+            inputs=[conv_pause_period],
+            outputs=[]
+        )
+
+        conv_pause_comma.change(
+            lambda x: save_preference("conv_pause_comma", x),
+            inputs=[conv_pause_comma],
+            outputs=[]
+        )
+
+        conv_pause_question.change(
+            lambda x: save_preference("conv_pause_question", x),
+            inputs=[conv_pause_question],
+            outputs=[]
+        )
+
+        conv_pause_hyphen.change(
+            lambda x: save_preference("conv_pause_hyphen", x),
+            inputs=[conv_pause_hyphen],
             outputs=[]
         )
 
@@ -4393,6 +5321,86 @@ def create_ui():
             outputs=[]
         )
 
+        conv_base_model_size.change(
+            lambda x: save_preference("conv_base_model_size", x),
+            inputs=[conv_base_model_size],
+            outputs=[]
+        )
+
+        # Save voice sample selections for Qwen Base
+        qwen_voice_sample_1.change(
+            lambda x: save_preference("qwen_voice_sample_1", x),
+            inputs=[qwen_voice_sample_1],
+            outputs=[]
+        )
+
+        qwen_voice_sample_2.change(
+            lambda x: save_preference("qwen_voice_sample_2", x),
+            inputs=[qwen_voice_sample_2],
+            outputs=[]
+        )
+
+        qwen_voice_sample_3.change(
+            lambda x: save_preference("qwen_voice_sample_3", x),
+            inputs=[qwen_voice_sample_3],
+            outputs=[]
+        )
+
+        qwen_voice_sample_4.change(
+            lambda x: save_preference("qwen_voice_sample_4", x),
+            inputs=[qwen_voice_sample_4],
+            outputs=[]
+        )
+
+        qwen_voice_sample_5.change(
+            lambda x: save_preference("qwen_voice_sample_5", x),
+            inputs=[qwen_voice_sample_5],
+            outputs=[]
+        )
+
+        qwen_voice_sample_6.change(
+            lambda x: save_preference("qwen_voice_sample_6", x),
+            inputs=[qwen_voice_sample_6],
+            outputs=[]
+        )
+
+        qwen_voice_sample_7.change(
+            lambda x: save_preference("qwen_voice_sample_7", x),
+            inputs=[qwen_voice_sample_7],
+            outputs=[]
+        )
+
+        qwen_voice_sample_8.change(
+            lambda x: save_preference("qwen_voice_sample_8", x),
+            inputs=[qwen_voice_sample_8],
+            outputs=[]
+        )
+
+        # Save voice sample selections for VibeVoice
+        voice_sample_1.change(
+            lambda x: save_preference("vv_voice_sample_1", x),
+            inputs=[voice_sample_1],
+            outputs=[]
+        )
+
+        voice_sample_2.change(
+            lambda x: save_preference("vv_voice_sample_2", x),
+            inputs=[voice_sample_2],
+            outputs=[]
+        )
+
+        voice_sample_3.change(
+            lambda x: save_preference("vv_voice_sample_3", x),
+            inputs=[voice_sample_3],
+            outputs=[]
+        )
+
+        voice_sample_4.change(
+            lambda x: save_preference("vv_voice_sample_4", x),
+            inputs=[voice_sample_4],
+            outputs=[]
+        )
+
         longform_model_size.change(
             lambda x: save_preference("vibevoice_model_size", x),
             inputs=[longform_model_size],
@@ -4405,10 +5413,26 @@ def create_ui():
             outputs=[]
         )
 
+        # Save conversation language preference (shared by both Qwen modes)
         conv_language.change(
             lambda x: save_preference("language", x),
             inputs=[conv_language],
             outputs=[]
+        )
+
+        # Unload all models button
+        def clear_status():
+            time.sleep(3)
+            return " "
+
+        unload_all_btn.click(
+            fn=unload_all_models,
+            inputs=[],
+            outputs=[unload_status]
+        ).then(
+            fn=clear_status,
+            inputs=[],
+            outputs=[unload_status]
         )
 
     return app, theme, custom_css, CONFIRMATION_MODAL_CSS, CONFIRMATION_MODAL_HEAD

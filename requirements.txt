@@ -1,0 +1,34 @@
+# Voice Clone Studio - Universal Requirements
+# Supports Windows, Linux, and macOS with platform-specific packages
+
+# Core TTS and audio processing dependencies (all platforms)
+qwen-tts
+librosa
+torchaudio
+soundfile
+sox
+onnxruntime
+einops
+
+# Web UI and utilities
+gradio
+numpy
+diffusers
+markdown
+
+# 4-bit quantization support (all platforms)
+bitsandbytes
+
+# Platform-specific packages
+openai-whisper; sys_platform == 'win32'  # Windows only - Linux/macOS use VibeVoice ASR instead
+
+# Optional performance enhancements (install separately for best performance):
+# - SAGE Attention (fastest): pip install sageattention
+# - Flash Attention 2 (fast): pip install flash-attn --no-build-isolation
+#   Or use prebuilt wheels: https://github.com/bdashore3/flash-attention/releases
+
+# Note for Linux users:
+# - If onnxruntime fails to install, try the nightly build:
+#   pip install --pre --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ onnxruntime
+# - openai-whisper is excluded due to compatibility issues (llvmlite/numba build failures)
+# - VibeVoice ASR is used for transcription on Linux/macOS

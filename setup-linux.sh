@@ -13,8 +13,8 @@ echo ""
 PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
 echo "Detected Python version: $PYTHON_VERSION"
 echo ""
-echo "ℹ️  Linux installation uses VibeVoice ASR for transcription"
-echo "   (openai-whisper is skipped due to compatibility issues)"
+echo "ℹ️  Note: openai-whisper is not installed on Linux (compatibility issues)"
+echo "   VibeVoice ASR will be used for transcription instead"
 echo ""
 
 # Install system dependencies (Ubuntu/Debian)
@@ -50,11 +50,11 @@ pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl
 
 # Install dependencies
 echo ""
-echo "Installing dependencies (using requirements-linux.txt)..."
-if [ -f "requirements-linux.txt" ]; then
-    pip install -r requirements-linux.txt
+echo "Installing dependencies (using requirements.txt)..."
+if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt
 else
-    echo "⚠️  requirements-linux.txt not found!"
+    echo "⚠️  requirements.txt not found!"
     exit 1
 fi
 
@@ -78,6 +78,5 @@ echo "  1. source venv/bin/activate"
 echo "  2. python voice_clone_studio.py"
 echo "  3. Or use: launch.sh"
 echo ""
-echo "📝 NOTE: This installation uses VibeVoice ASR for transcription."
-echo "         Whisper is not included (Linux compatibility issues)."
+echo "📝 NOTE: VibeVoice ASR is used for transcription on Linux."
 echo ""
