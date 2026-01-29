@@ -44,6 +44,7 @@ samples/*
 *.prompt
 config.json
 Qwen/
+.env
 
 # Jupyter
 .ipynb_checkpoints/
