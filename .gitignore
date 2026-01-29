@@ -22,6 +22,7 @@ wheels/
 
 # Virtual environments
 venv/
+venv2/
 ENV/
 env/
 .venv/
@@ -38,7 +39,11 @@ start_venv.bat
 # Project specific
 output/*
 temp/*
+test/
 samples/*
+datasets/*
+trained_models/*
+models/*
 *.wav
 *.mp3
 *.prompt

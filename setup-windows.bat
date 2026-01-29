@@ -3,12 +3,12 @@ echo ========================================
 echo Voice Clone Studio - Setup Script
 echo ========================================
 echo.
-echo Select CUDA version for PyTorch:
-echo   1. CUDA 12.1 (recommended for older GPUs, GTX 10-series and newer)
+echo Select CUDA version for PyTorch (press number or wait 10 seconds for default):
+echo   1. CUDA 13.0 (latest, for newest GPUs - DEFAULT)
 echo   2. CUDA 12.8 (for newer GPUs)
-echo   3. CUDA 13.0 (latest, for newest GPUs - default in 10 seconds)
+echo   3. CUDA 12.1 (for older GPUs, GTX 10-series and newer)
 echo.
-choice /C 123 /T 10 /D 3 /M "Enter choice"
+choice /C 123 /T 10 /D 1 /M "Enter choice"
 set CUDA_CHOICE=%errorlevel%
 echo.
 
@@ -67,13 +67,22 @@ if %errorlevel% neq 0 (
 )
 echo.
 
+REM Update pip
+echo Updating pip...
+python.exe -m pip install --upgrade pip
+if %errorlevel% neq 0 (
+    echo ERROR: Failed to update pip!
+    pause
+    exit /b 1
+)
+
 REM Install PyTorch
 echo [5/6] Installing PyTorch...
 setlocal enabledelayedexpansion
 
-if "%CUDA_CHOICE%"=="1" set CUDA_VER=cu121
+if "%CUDA_CHOICE%"=="1" set CUDA_VER=cu130
 if "%CUDA_CHOICE%"=="2" set CUDA_VER=cu128
-if "%CUDA_CHOICE%"=="3" set CUDA_VER=cu130
+if "%CUDA_CHOICE%"=="3" set CUDA_VER=cu121
 
 if defined CUDA_VER (
     echo Installing PyTorch with !CUDA_VER!...
@@ -124,6 +133,6 @@ echo.
 echo To launch Voice Clone Studio:
 echo   1. Make sure virtual environment is activated: venv\Scripts\activate
 echo   2. Run: python Voice_Clone_Studio.py
-echo   3. Or use: Launch_UI.bat
+echo   3. Or use: launch.bat
 echo.
 pause

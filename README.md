@@ -3,8 +3,7 @@
 A Gradio-based web UI for voice cloning and voice design, powered by [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) and [VibeVoice](https://github.com/microsoft/VibeVoice).
 Supports both Whisper or VibeVoice-asr for automatic Transcription.
 
-![Voice Clone Studio](https://img.shields.io/badge/Voice%20Clone%20Studio-Powered%20by%20Qwen3--TTS-blue)
-![VibeVoice](https://img.shields.io/badge/VibeVoice-Long--Form%20TTS-green)
+![Voice Clone Studio](https://img.shields.io/badge/Voice%20Clone%20Studio-Powered%20by%20Qwen3--TTS-blue) ![VibeVoice](https://img.shields.io/badge/VibeVoice-%20TTS-green) ![VibeVoice](https://img.shields.io/badge/VibeVoice-%20ASR-green)
 
 ## Features
 
@@ -83,13 +82,37 @@ Create voices from natural language descriptions - no audio needed, using Qwen3-
 - Describe age, gender, emotion, accent, speaking style
 - Generate unique voices matching your description
 
+### Train Custom Voices
+Fine-tune your own custom voice models with your training data:
+
+- **Dataset Management** - Organize training samples in the `datasets/` folder
+- **Audio Preparation** - Auto-converts to 24kHz 16-bit mono format
+- **Training Pipeline** - Complete 3-step workflow (validation → extract codes → train)
+- **Epoch Selection** - Compare different training checkpoints
+- **Live Progress** - Real-time training logs and loss monitoring
+- **Voice Presets Integration** - Use trained models alongside premium speakers
+
+**Requirements:**
+- CUDA GPU required
+- Multiple audio samples with transcripts
+- Training time: ~10-30 minutes depending on dataset size
+
+**Workflow:**
+1. Prepare audio files (WAV/MP3) and organize in `datasets/YourSpeakerName/` folder
+2. Use **Batch Transcribe** to automatically transcribe all files at once
+3. Review and edit individual transcripts as needed
+4. Configure training parameters (model size, epochs, learning rate)
+5. Monitor training progress in real-time
+6. Use trained model in Voice Presets tab
+
 ### Prep Samples
 Full audio preparation workspace:
 
 - **Trim** - Use waveform selection to cut audio
 - **Normalize** - Balance audio levels
 - **Convert to Mono** - Ensure single-channel audio
-- **Transcribe** - Whisper-powered automatic transcription
+- **Transcribe** - Whisper or VibeVoice ASR automatic transcription
+- **Batch Transcribe** - Process entire folders of audio files at once
 - **Save as Sample** - One-click sample creation
 
 ### Output History
@@ -100,11 +123,13 @@ View, play back, and manage your previously generated audio files.
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.10+ (recommended for all platforms)
 - CUDA-compatible GPU (recommended: 8GB+ VRAM)
 - **SOX**  (Sound eXchange) - Required for audio processing
-- **FFMPEG** - Multimedia framework required for audio format conversion and Whisper transcription
+- **FFMPEG** - Multimedia framework required for audio format conversion
 - [Flash Attention 2](https://github.com/Dao-AILab/flash-attention) (optional but recommended)
+
+**Note for Linux users:** The Linux installation skips `openai-whisper` (compatibility issues). VibeVoice ASR is used for transcription instead.
 
 ### Setup
 
@@ -118,7 +143,7 @@ cd Voice-Clone-Studio
 
 2. Run the setup script:
 ```bash
-setup.bat
+setup-windows.bat
 ```
 
 This will automatically:
@@ -128,6 +153,28 @@ This will automatically:
 - Install all dependencies
 - Display your Python version
 - Show instructions for optional Flash Attention 2 installation
+
+#### Quick Setup (Linux)
+
+1. Clone the repository:
+```bash
+git clone https://github.com/FranckyB/Voice-Clone-Studio.git
+cd Voice-Clone-Studio
+```
+
+2. Make the setup script executable and run it:
+```bash
+chmod +x setup-linux.sh
+./setup-linux.sh
+```
+
+This will automatically:
+- Detect your Python version
+- Create virtual environment
+- Install PyTorch with CUDA support
+- Install all dependencies (using requirements file)
+- Handle ONNX Runtime installation issues
+- Warn about Whisper compatibility if needed
 
 #### Manual Setup (All Platforms)
 
@@ -148,14 +195,19 @@ source venv/bin/activate
 
 3. (NVIDIA GPU) Install PyTorch with CUDA support:
 ```bash
+# Linux/Windows
 pip install torch==2.9.1 torchaudio --index-url https://download.pytorch.org/whl/cu130
 ```
 
 4. Install dependencies:
 ```bash
+# All platforms (Windows, Linux, macOS)
 pip install -r requirements.txt
 ```
 
+**Note:** The requirements file uses platform markers to automatically install the correct packages:
+- Windows: Includes `openai-whisper` for transcription
+- Linux/macOS: Excludes `openai-whisper` (uses VibeVoice ASR instead)
 
 5. Install Sox
 
@@ -189,15 +241,12 @@ sudo dnf install ffmpeg
 brew install ffmpeg
 ```
 
-7. (Optional) Install Flash Attention 2 for better performance:
-```bash
-# Option 1 - Build from source (requires C++ compiler):
-pip install flash-attn --no-build-isolation
+7. (Optional) Install FlashAttention 2  for faster generation:
+**Note:** The application automatically detects and uses the best available attention mechanism. Configure in Settings tab: `auto` (recommended) → `flash_attention_2` → `sdpa` → `eager`
 
-# Option 2 - Use prebuilt wheel (faster, recommended):
-# Download from: https://github.com/bdashore3/flash-attention/releases
-# Then: pip install downloaded-wheel-file.whl
-```
+## Troubleshooting
+For troubleshooting solutions, see [docs/troubleshooting.md](docs/troubleshooting.md).
+
 
 #### Docker Setup (Windows)
 
@@ -293,14 +342,16 @@ Each tab lets you choose between model sizes:
 
 | Model | Sizes | Use Case |
 |-------|-------|----------|
-| **Base** | Small, Large | Voice cloning from samples |
-| **CustomVoice** | Small, Large | Premium speakers with style control |
-| **VoiceDesign** | 1.7B only | Voice design from descriptions |
-| **VibeVoice** | Small, Large | Long-form multi-speaker (up to 90 min) |
+| **Qwen3-TTS Base** | Small, Large | Voice cloning from samples |
+| **Qwen3-TTS CustomVoice** | Small, Large | Premium speakers with style control |
+| **Qwen3-TTS VoiceDesign** | 1.7B only | Voice design from descriptions |
+| **VibeVoice-TTS** | Small, Large | Voice cloning & Long-form multi-speaker (up to 90 min) |
+| **VibeVoice-ASR** | Large | Audio transcription |
 | **Whisper** | Medium | Audio transcription |
 
 - **Small** = Faster, less VRAM (Qwen: 0.6B ~4GB, VibeVoice: 1.5B)
 - **Large** = Better quality, more expressive (Qwen: 1.7B ~8GB, VibeVoice: Large model)
+- **4 Bit Quantized** version of the Large model is also included for VibeVoice.
 
 Models are automatically downloaded on first use via HuggingFace.
 
@@ -328,26 +379,9 @@ This project is based on and uses code from:
 - [Gradio](https://gradio.app/) for the web UI framework
 - [OpenAI Whisper](https://github.com/openai/whisper) for transcription
 
+## Updates
 
-## Versions
+For detailed version history and release notes, see [docs/updates.md](docs/updates.md).
 
-**Version 0.3.5** - Style Instructions
-- Added Style Instructions support in Conversation for Qwen model. (Unsupported by VibeVoice)
+**Latest Version:** 0.6.0 - Enhanced Model Support & Settings (January 27, 2026)
 
-**Version 0.30** - Enhanced Media Support
-- Video File Support - Upload video files (.mp4, .mov, .avi, .mkv, etc.) to Prep Samples tab
-- Automatic Audio Extraction - Uses ffmpeg to extract audio from video files for voice cloning
-- Improved Workflow - Added Clear button to quickly reset the audio editor
-
-**Version 0.2** - VibeVoice Integration
-- Added **VibeVoice TTS** support for long-form multi-speaker generation (up to 90 minutes)
-- Added **VibeVoice ASR** as alternative transcription engine alongside Whisper
-- Conversation tab now supports both Qwen (9 preset voices) and VibeVoice (custom samples) engines
-- Multi-speaker conversation support with up to 4 custom voices
-
-**Version 0.1** - Initial Release
-- Voice cloning with Qwen3-TTS (Base, CustomVoice, VoiceDesign models)
-- Whisper-powered automatic transcription
-- Sample preparation toolkit (trim, normalize, mono conversion)
-- Voice prompt caching for faster generation
-- Seed control for reproducible outputs
