@@ -247,6 +247,40 @@ brew install ffmpeg
 ## Troubleshooting
 For troubleshooting solutions, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
+#### Docker Setup (Windows)
+
+1. **Install NVIDIA Drivers (Windows Side)**
+   - Install the latest standard NVIDIA driver (Game Ready or Studio) for Windows from the [NVIDIA Drivers page](https://www.nvidia.com/Download/index.aspx).
+   - **Crucial:** Do *not* try to install NVIDIA drivers inside your WSL Linux terminal. It will conflict with the host driver.
+
+2. **Update WSL 2**
+   - Open **PowerShell** as Administrator and ensure your WSL kernel is up to date:
+     ```powershell
+     wsl --update
+     ```
+   - (If you don't have WSL installed yet, run `wsl --install` and restart your computer).
+
+3. **Configure Docker Desktop**
+   - Install the latest version of **Docker Desktop for Windows**.
+   - Open Docker Desktop **Settings** (gear icon).
+   - Under **General**, ensure **"Use the WSL 2 based engine"** is checked.
+   - Under **Resources > WSL Integration**, ensure the switch is enabled for your default Linux distro (e.g., Ubuntu).
+
+4. **Run with Docker Compose**
+   - Run the following command in the repository root:
+     ```powershell
+     docker-compose up --build
+     ```
+   - The application will be accessible at `http://127.0.0.1:7860`.
+
+### Running Tests (Docker)
+
+To verify the installation and features (like the DeepFilterNet denoiser), runs the integration tests inside the container:
+
+```powershell
+# Run the Denoiser Integration Test
+docker-compose exec voice-clone-studio python tests/integration_test_denoiser.py
+```
 
 ## Usage
 

@@ -1,12 +1,6 @@
 import os
 import sys
 from pathlib import Path
-
-# Add modules directory to Python path for vibevoice components
-MODULES_DIR = Path(__file__).parent / "modules"
-if str(MODULES_DIR) not in sys.path:
-    sys.path.insert(0, str(MODULES_DIR))
-
 import torch
 import soundfile as sf
 import gradio as gr
@@ -40,6 +34,61 @@ from modules.core_components import (
     handle_save_emotion,
     handle_delete_emotion
 )
+
+# Add modules directory to Python path for vibevoice components
+sys.path.insert(0, str(Path(__file__).parent / "modules"))
+
+# Config file path
+CONFIG_FILE = Path(__file__).parent / "config.json"
+
+
+# Supported/Built-in Models
+SUPPORTED_MODELS = {
+    # Qwen3-TTS models
+    "qwen3-tts-12hz-1.7b-base",
+    "qwen3-tts-12hz-1.7b-customvoice",
+    "qwen3-tts-12hz-1.7b-voicedesign",
+    "qwen3-tts-12hz-0.6b-base",
+    "qwen3-tts-12hz-0.6b-customvoice",
+    "qwen3-tts-0.6b-base",
+    "qwen3-tts-0.6b-customvoice",
+    "qwen3-tts-tokenizer-12hz",
+    # VibeVoice models
+    "vibevoice-tts-1.5b",
+    "vibevoice-tts-4b",
+    "vibevoice-asr",
+    # Whisper models
+    "whisper"
+}
+
+# DeepFilterNet / Torchaudio Compatibility Shim
+try:
+    from modules.deepfilternet import deepfilternet_torchaudio_patch
+    deepfilternet_torchaudio_patch.apply_patches()
+except ImportError:
+    print("Warning: compatibility_patches module not found. DeepFilterNet may fail to load.")
+
+# Try importing DeepFilterNet
+try:
+    from df.enhance import enhance, init_df, load_audio, save_audio
+    from df.io import load_audio as df_load_audio
+    DEEPFILTER_AVAILABLE = True
+except ImportError as e:
+    # If it still fails with the specific backend error, print guidance
+    if "torchaudio.backend" in str(e):
+        print(f"⚠ DeepFilterNet failed to load due to torchaudio incompatibility: {e}")
+    else:
+        print(f"⚠ DeepFilterNet not available: {e}")
+    DEEPFILTER_AVAILABLE = False
+
+# Check Whisper availability
+try:
+    import whisper
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+    print("⚠ Whisper not available - only VibeVoice ASR will be offered for transcription")
+
 
 # Audio notification helper
 def play_completion_beep():
@@ -88,31 +137,11 @@ def play_completion_beep():
         except:
             pass
 
-# Supported/Built-in Models - these should NOT appear in trained models list (all lowercase for efficient matching)
-SUPPORTED_MODELS = {
-    # Qwen3-TTS models (with and without 12hz for flexibility)
-    "qwen3-tts-12hz-1.7b-base",
-    "qwen3-tts-12hz-1.7b-customvoice",
-    "qwen3-tts-12hz-1.7b-voicedesign",
-    "qwen3-tts-12hz-0.6b-base",
-    "qwen3-tts-12hz-0.6b-customvoice",
-    "qwen3-tts-0.6b-base",
-    "qwen3-tts-0.6b-customvoice",
-    "qwen3-tts-tokenizer-12hz",
-    # VibeVoice models
-    "vibevoice-tts-1.5b",
-    "vibevoice-tts-4b",
-    "vibevoice-asr",
-    # Whisper models
-    "whisper"
-}
-
-# Directories
-CONFIG_FILE = Path(__file__).parent / "config.json"
 
 # Load config on startup (before initializing directories)
 def load_config():
     """Load user preferences from config file."""
+
     default_config = {
         "transcribe_model": "Whisper",
         "tts_base_size": "Large",
@@ -130,7 +159,7 @@ def load_config():
         "temp_folder": "temp",
         "models_folder": "models",
         "trained_models_folder": "models",
-        "emotions": None  # Will be initialized to CORE_EMOTIONS on first load
+        "emotions": None
     }
 
     try:
@@ -168,8 +197,10 @@ def save_config(config):
 # Load config first
 _user_config = load_config()
 
+
 # Load active emotions from config
 _active_emotions = load_emotions_from_config(_user_config)
+
 
 # Initialize directories from config
 SAMPLES_DIR = Path(__file__).parent / _user_config.get("samples_folder", "samples")
@@ -181,12 +212,14 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 DATASETS_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 
+
 # Clear temp folder on launch
 for f in TEMP_DIR.iterdir():
     if f.is_file():
         f.unlink()
     elif f.is_dir():
         shutil.rmtree(f)
+
 
 # Global model cache - now stores (model, size) tuples
 _tts_model = None
@@ -198,6 +231,9 @@ _whisper_model = None
 _vibe_voice_model = None
 _vibevoice_tts_model = None  # VibeVoice TTS for long-form multi-speaker
 _vibevoice_tts_model_size = None
+_deepfilter_model = None  # DeepFilterNet model for audio enhancement
+_deepfilter_state = None
+_deepfilter_params = None
 _last_loaded_model = None  # Track which model was last loaded to determine if we need to unload
 _voice_prompt_cache = {}  # In-memory cache for voice prompts
 
@@ -221,14 +257,8 @@ VOICE_CLONE_OPTIONS = [
 DEFAULT_VOICE_CLONE_MODEL = "Qwen3 - Large"
 
 # Supported languages for TTS
-LANGUAGES = [
-    "Auto", "English", "Chinese", "Japanese", "Korean",
-    "German", "French", "Russian", "Portuguese", "Spanish", "Italian"
-]
-
-# Emotion system now managed by modules/emotion_manager.py
-# CORE_EMOTIONS contains the hardcoded defaults
-# _active_emotions contains the user's current emotion presets (loaded from config)
+LANGUAGES = ["Auto", "English", "Chinese", "Japanese", "Korean",
+             "German", "French", "Russian", "Portuguese", "Spanish", "Italian"]
 
 # Custom Voice speakers
 CUSTOM_VOICE_SPEAKERS = [
@@ -242,17 +272,6 @@ CUSTOM_VOICE_SPEAKERS = [
     "Ono_Anna",
     "Sohee"
 ]
-
-# ============== Configuration Management ==============
-# (Functions moved earlier before directory initialization)
-
-# Check Whisper availability
-try:
-    import whisper
-    WHISPER_AVAILABLE = True
-except ImportError:
-    WHISPER_AVAILABLE = False
-    print("⚠ Whisper not available - only VibeVoice ASR will be offered for transcription")
 
 # ============== Model Management ==============
 
@@ -309,6 +328,7 @@ def unload_all_models_internal():
     """Internal function to unload all models without resetting _last_loaded_model."""
     global _tts_model, _tts_model_size, _voice_design_model, _custom_voice_model, _custom_voice_model_size
     global _whisper_model, _vibe_voice_model, _vibevoice_tts_model, _vibevoice_tts_model_size
+    global _deepfilter_model, _deepfilter_state, _deepfilter_params
 
     if _tts_model is not None:
         del _tts_model
@@ -336,6 +356,12 @@ def unload_all_models_internal():
         del _vibevoice_tts_model
         _vibevoice_tts_model = None
         _vibevoice_tts_model_size = None
+
+    if _deepfilter_model is not None:
+        del _deepfilter_model
+        _deepfilter_model = None
+        _deepfilter_state = None
+        _deepfilter_params = None
 
     torch.cuda.empty_cache()
 
@@ -401,7 +427,8 @@ def unload_all_models():
     """Unload ALL models (TTS and ASR) to completely free VRAM."""
     global _tts_model, _tts_model_size, _custom_voice_model, _custom_voice_model_size
     global _voice_design_model, _vibevoice_tts_model, _vibevoice_tts_model_size
-    global _whisper_model, _vibe_voice_model, _last_loaded_model
+    global _whisper_model, _vibe_voice_model, _deepfilter_model, _deepfilter_state, _deepfilter_params
+    global _last_loaded_model
 
     freed = []
 
@@ -440,6 +467,14 @@ def unload_all_models():
         _vibe_voice_model = None
         freed.append("VibeVoice ASR")
 
+    # Unload DeepFilterNet
+    if _deepfilter_model is not None:
+        del _deepfilter_model
+        _deepfilter_model = None
+        _deepfilter_state = None
+        _deepfilter_params = None
+        freed.append("DeepFilterNet")
+
     # Reset tracker
     _last_loaded_model = None
 
@@ -451,6 +486,38 @@ def unload_all_models():
     else:
         return "No models were loaded"
 
+
+def get_deepfilter_model():
+    """Lazy-load the DeepFilterNet model."""
+    global _deepfilter_model, _deepfilter_state, _deepfilter_params
+
+    if not DEEPFILTER_AVAILABLE:
+        raise ImportError("DeepFilterNet is not available on this system.")
+
+    # Unload other models if switching to DeepFilterNet
+    check_and_unload_if_different("deepfilter")
+
+    if _deepfilter_model is None:
+        print("Loading DeepFilterNet model...")
+        try:
+            # Initialize with default settings (DeepFilterNet3)
+            # init_df returns (model, df_state, params) in newer versions
+            res = init_df()
+            if isinstance(res, tuple):
+                _deepfilter_model = res[0]
+                _deepfilter_state = res[1]
+                _deepfilter_params = res[2]
+            else:
+                _deepfilter_model = res
+                _deepfilter_state = None
+                _deepfilter_params = None
+
+            print("DeepFilterNet model loaded!")
+        except Exception as e:
+            print(f"❌ Error loading DeepFilterNet: {e}")
+            raise e
+
+    return _deepfilter_model, _deepfilter_state, _deepfilter_params
 
 # ============================================
 # Attention Mechanism Helper Functions
@@ -530,7 +597,6 @@ def download_model_from_huggingface(model_id, local_folder_name=None, progress=N
     """
     import subprocess
     import threading
-    import time
 
     try:
         # Validate inputs
@@ -682,7 +748,6 @@ def load_model_with_attention(model_class, model_name, user_preference="auto", *
         raise RuntimeError(f"Failed to load model with any attention mechanism. Last error: {str(last_error)}")
     else:
         raise RuntimeError("Failed to load model with any attention mechanism")
-
 
 # ============================================
 # TTS Model Loading Functions
@@ -2601,6 +2666,7 @@ def convert_to_mono(audio_file):
     try:
         data, sr = sf.read(audio_file)
 
+        # check if stereo, if mono return original
         if len(data.shape) > 1 and data.shape[1] > 1:
             mono = np.mean(data, axis=1)
             temp_path = TEMP_DIR / f"mono_{datetime.now().strftime('%H%M%S')}.wav"
@@ -2611,6 +2677,49 @@ def convert_to_mono(audio_file):
 
     except Exception as e:
         return None
+
+
+def clean_audio(audio_file, progress=gr.Progress()):
+    """Clean audio using DeepFilterNet."""
+    if audio_file is None:
+        return None
+
+    if not DEEPFILTER_AVAILABLE:
+        print("DeepFilterNet not installed. Skipping cleaning.")
+        return audio_file
+
+    try:
+        progress(0.1, desc="Loading Audio Cleaner...")
+        df_model, df_state, df_params = get_deepfilter_model()
+
+        # Get sample rate from params or use default
+        target_sr = df_params.sr if df_params is not None and hasattr(df_params, 'sr') else 48000
+
+        progress(0.3, desc="Processing audio...")
+
+        # Load audio using DeepFilterNet's loader
+        # This returns audio tensor and sample rate
+        audio, _ = df_load_audio(audio_file, sr=target_sr)
+
+        # Run enhancement
+        # enhance method expects audio tensor and model
+        enhanced_audio = enhance(df_model, df_state=df_state, audio=audio)
+
+        # Save output
+        timestamp = datetime.now().strftime("%H%M%S")
+        output_path = TEMP_DIR / f"cleaned_{timestamp}.wav"
+
+        # Save using DeepFilterNet's save function
+        save_audio(str(output_path), enhanced_audio, target_sr)
+
+        progress(1.0, desc="Done!")
+        return str(output_path)
+
+    except Exception as e:
+        print(f"Error cleaning audio: {e}")
+        # Return original if cleaning fails
+        return audio_file
+
 
 def transcribe_audio(audio_file, whisper_language, transcribe_model, progress=gr.Progress()):
     """Transcribe audio using Whisper or VibeVoice ASR."""
@@ -2868,18 +2977,18 @@ def delete_sample(action, sample_name):
     """Delete a sample (wav, txt, and prompt cache files)."""
     # Ignore empty calls or actions not for this callback
     if not action or not action.strip() or not action.startswith("sample_"):
-        return gr.update(), gr.update(), gr.update(), gr.update()
+        return gr.update(), gr.update(), gr.update()
 
     # If cancelled, return without doing anything
     if "cancel" in action:
-        return "❌ Deletion cancelled", gr.update(), gr.update(), action
+        return "❌ Deletion cancelled", gr.update(), gr.update()
 
     # Only process confirm actions
     if "confirm" not in action:
-        return gr.update(), gr.update(), gr.update(), action
+        return gr.update(), gr.update(), gr.update()
 
     if not sample_name:
-        return "❌ No sample selected", gr.update(), gr.update(), action
+        return "❌ No sample selected", gr.update(), gr.update()
 
     try:
         wav_path = SAMPLES_DIR / f"{sample_name}.wav"
@@ -2906,14 +3015,13 @@ def delete_sample(action, sample_name):
             return (
                 f"✅ Deleted {sample_name} ({', '.join(deleted)} files)",
                 gr.update(choices=choices, value=choices[0] if choices else None),
-                gr.update(choices=choices, value=choices[0] if choices else None),
-                action
+                gr.update(choices=choices, value=choices[0] if choices else None)
             )
         else:
-            return "❌ Files not found", gr.update(), gr.update(), action
+            return "❌ Files not found", gr.update(), gr.update()
 
     except Exception as e:
-        return f"❌ Error deleting: {str(e)}", gr.update(), gr.update(), action
+        return f"❌ Error deleting: {str(e)}", gr.update(), gr.update()
 
 
 def clear_sample_cache(sample_name):
@@ -3094,18 +3202,18 @@ def delete_dataset_item(action, folder, filename):
     """Delete both audio and transcript files."""
     # Ignore empty calls or actions not for this callback
     if not action or not action.strip() or not action.startswith("finetune_"):
-        return gr.update(), gr.update(), gr.update()
+        return gr.update(), gr.update()
 
     # If cancelled, return without doing anything
     if "cancel" in action:
-        return "❌ Deletion cancelled", gr.update(), action
+        return "❌ Deletion cancelled", gr.update()
 
     # Only process confirm actions
     if "confirm" not in action:
-        return gr.update(), gr.update(), action
+        return gr.update(), gr.update()
 
     if not filename:
-        return "❌ No file selected", gr.update(), action
+        return "❌ No file selected", gr.update()
 
     try:
         # Determine the directory
@@ -3127,9 +3235,9 @@ def delete_dataset_item(action, folder, filename):
 
         files = get_dataset_files(folder)
         msg = f"✅ Deleted {filename} ({', '.join(deleted)})" if deleted else "❌ File not found"
-        return msg, gr.update(choices=files, value=None), action
+        return msg, gr.update(choices=files, value=None)
     except Exception as e:
-        return f"❌ Error: {str(e)}", gr.update(choices=get_dataset_files(folder), value=None), action
+        return f"❌ Error: {str(e)}", gr.update(choices=get_dataset_files(folder), value=None)
 
 
 def auto_transcribe_finetune(folder, filename, transcribe_model="Whisper", language="Auto-detect", progress=gr.Progress()):
@@ -3751,7 +3859,8 @@ def delete_emotion_handler(confirm_value, emotion_name):
 
     if success:
         _active_emotions = updated_emotions
-        return gr.update(choices=new_choices, value=""), message, clear_trigger
+        # Reset dropdown to None (no emotion selected) after deletion
+        return gr.update(choices=new_choices, value=None), message, clear_trigger
     elif message:  # Error message
         return gr.update(), message, clear_trigger
     else:  # Cancelled
@@ -3839,10 +3948,11 @@ def create_ui():
         # Add input modal HTML
         gr.HTML(INPUT_MODAL_HTML)
 
-        # Hidden trigger for confirmation modal - visible but hidden via CSS
-        confirm_trigger = gr.Textbox(label="Confirm Trigger", value="", elem_id="confirm-trigger")
-        # Hidden trigger for input modal
-        input_trigger = gr.Textbox(label="Input Trigger", value="", elem_id="input-trigger")
+        with gr.Row():
+            # Hidden trigger for confirmation modal - visible but hidden via CSS
+            confirm_trigger = gr.Textbox(label="Confirm Trigger", value="", elem_id="confirm-trigger")
+            # Hidden trigger for input modal - visible but hidden via CSS
+            input_trigger = gr.Textbox(label="Input Trigger", value="", elem_id="input-trigger")
 
         # Always-visible unload button
         with gr.Row():
@@ -3851,6 +3961,7 @@ def create_ui():
                     # 🎙️ Voice Clone Studio
                     <p style="font-size: 0.9em; color: #ffffff; margin-top: -10px;">  Powered by Qwen3-TTS, VibeVoice and Whisper</p>
                     """)
+
             with gr.Column(scale=1, min_width=180):
                 unload_all_btn = gr.Button("Clear VRAM", size="sm", variant="secondary")
                 unload_status = gr.Markdown(" ", visible=True)
@@ -3955,7 +4066,7 @@ def create_ui():
                             # Emotion management buttons
                             with gr.Row():
                                 qwen_save_emotion_btn = gr.Button("Save", size="sm", scale=1)
-                                qwen_delete_emotion_btn = gr.Button("Delete", size="sm", scale=1)
+                                qwen_delete_emotion_btn = gr.Button("Delete", size="sm", scale=1, variant="primary")
                             qwen_emotion_save_name = gr.Textbox(visible=False, value="")
 
                             with gr.Row():
@@ -4081,7 +4192,7 @@ def create_ui():
                             type="filepath"
                         )
 
-                        clone_status = gr.Textbox(label="Status", interactive=False, lines=3, max_lines=5)
+                        clone_status = gr.Textbox(label="Status", interactive=False, lines=2, max_lines=5)
 
                 # Event handlers for Voice Clone tab
                 def load_selected_sample(sample_name):
@@ -4239,15 +4350,15 @@ def create_ui():
                 def delete_qwen_emotion_wrapper(confirm_value, emotion_name):
                     """Only process if context matches qwen_emotion_."""
                     if not confirm_value or not confirm_value.startswith("qwen_emotion_"):
-                        return gr.update(), gr.update(), confirm_value
+                        return gr.update(), gr.update()
                     # Call the delete handler with both parameters
                     dropdown_update, status_msg, clear_trigger = delete_emotion_handler(confirm_value, emotion_name)
-                    return dropdown_update, status_msg, clear_trigger
+                    return dropdown_update, status_msg
 
                 confirm_trigger.change(
                     delete_qwen_emotion_wrapper,
                     inputs=[confirm_trigger, qwen_emotion_preset],
-                    outputs=[qwen_emotion_preset, clone_status, confirm_trigger]
+                    outputs=[qwen_emotion_preset, clone_status]
                 )
 
             # ============== TAB 2: Custom Voice ==============
@@ -4407,7 +4518,7 @@ def create_ui():
                             # Emotion management buttons
                             with gr.Row(visible=False) as custom_emotion_buttons_row:
                                 custom_save_emotion_btn = gr.Button("Save", size="sm", scale=1)
-                                custom_delete_emotion_btn = gr.Button("Delete", size="sm", scale=1)
+                                custom_delete_emotion_btn = gr.Button("Delete", size="sm", scale=1, variant="primary")
                             custom_emotion_save_name = gr.Textbox(visible=False, value="")
 
                             with gr.Row():
@@ -4646,15 +4757,15 @@ def create_ui():
                 def delete_custom_emotion_wrapper(confirm_value, emotion_name):
                     """Only process if context matches custom_emotion_."""
                     if not confirm_value or not confirm_value.startswith("custom_emotion_"):
-                        return gr.update(), gr.update(), confirm_value
+                        return gr.update(), gr.update()
                     # Call the delete handler
                     dropdown_update, status_msg, clear_trigger = delete_emotion_handler(confirm_value, emotion_name)
-                    return dropdown_update, status_msg, clear_trigger
+                    return dropdown_update, status_msg
 
                 confirm_trigger.change(
                     delete_custom_emotion_wrapper,
                     inputs=[confirm_trigger, custom_emotion_preset],
-                    outputs=[custom_emotion_preset, preset_status, confirm_trigger]
+                    outputs=[custom_emotion_preset, preset_status]
                 )
 
             # ============== TAB 3: Unified Conversation ==============
@@ -5064,7 +5175,7 @@ def create_ui():
                             label="Generated Conversation",
                             type="filepath"
                         )
-                        conv_status = gr.Textbox(label="Status", interactive=False, max_lines=5)
+                        conv_status = gr.Textbox(label="Status", interactive=False, lines=2, max_lines=5)
 
                         # Model-specific tips
                         qwen_custom_tips_text = dedent("""\
@@ -5372,7 +5483,7 @@ def create_ui():
                                 )
 
                         design_generate_btn = gr.Button("Generate Voice", variant="primary", size="lg")
-                        design_status = gr.Textbox(label="Status", interactive=False, max_lines=3)
+                        design_status = gr.Textbox(label="Status", interactive=False, lines=2, max_lines=3)
 
                     with gr.Column(scale=1):
                         gr.Markdown("### Preview & Save")
@@ -5476,9 +5587,10 @@ def create_ui():
 
                         # gr.Markdown("#### Quick Actions")
                         with gr.Row():
-                            clear_btn = gr.Button("Clear", size="sm")
-                            normalize_btn = gr.Button("Normalize Volume", size="sm")
-                            mono_btn = gr.Button("Convert to Mono", size="sm")
+                            clear_btn = gr.Button("Clear", scale=1, size="sm")
+                            clean_btn = gr.Button("AI Denoise", scale=2, size="sm", variant="secondary", visible=DEEPFILTER_AVAILABLE)
+                            normalize_btn = gr.Button("Normalize Volume", scale=2, size="sm")
+                            mono_btn = gr.Button("Convert to Mono", scale=2, size="sm")
 
                         prep_audio_info = gr.Textbox(
                             label="Audio Info",
@@ -5518,7 +5630,6 @@ def create_ui():
                             transcribe_btn = gr.Button("Transcribe Audio", variant="primary")
 
                             # Save as new sample
-                            # gr.Markdown("### Save as New Sample")
                             new_sample_name = gr.Textbox(
                                 label="Sample Name",
                                 placeholder="Enter a name for this voice sample...",
@@ -5583,7 +5694,7 @@ def create_ui():
                 confirm_trigger.change(
                     delete_sample,
                     inputs=[confirm_trigger, existing_sample_dropdown],
-                    outputs=[save_status, existing_sample_dropdown, sample_dropdown, confirm_trigger]
+                    outputs=[save_status, existing_sample_dropdown, sample_dropdown]
                 )
 
                 # Clear cache
@@ -5623,6 +5734,13 @@ def create_ui():
                 # Convert to mono
                 mono_btn.click(
                     convert_to_mono,
+                    inputs=[prep_audio_editor],
+                    outputs=[prep_audio_editor]
+                )
+
+                # Clean audio
+                clean_btn.click(
+                    clean_audio,
                     inputs=[prep_audio_editor],
                     outputs=[prep_audio_editor]
                 )
@@ -5671,15 +5789,15 @@ def create_ui():
                 def delete_output_file(action, selected_file):
                     # Ignore empty calls or actions not for this callback
                     if not action or not action.strip() or not action.startswith("output_"):
-                        return gr.update(), gr.update(), gr.update(), gr.update()
+                        return gr.update(), gr.update(), gr.update()
 
                     # If cancelled, return without doing anything
                     if "cancel" in action:
-                        return gr.update(), gr.update(), gr.update(value="❌ Deletion cancelled"), action
+                        return gr.update(), gr.update(), gr.update(value="❌ Deletion cancelled")
 
                     # Only process confirm actions
                     if "confirm" not in action:
-                        return gr.update(), gr.update(), gr.update(), action
+                        return gr.update(), gr.update(), gr.update()
 
                     try:
                         # Convert filename to full path if needed
@@ -5701,9 +5819,9 @@ def create_ui():
                         msg = f"✅ Deleted: {audio_path.name} ({', '.join(deleted)})" if deleted else "❌ Files not found"
 
                         # Refresh list and clear selection
-                        return gr.update(choices=choices, value=None), gr.update(value=None), gr.update(value=msg), action
+                        return gr.update(choices=choices, value=None), gr.update(value=None), gr.update(value=msg)
                     except Exception as e:
-                        return gr.update(), gr.update(value=None), gr.update(value=f"❌ Error: {str(e)}"), action
+                        return gr.update(), gr.update(value=None), gr.update(value=f"❌ Error: {str(e)}")
 
                 # Show modal on delete button click
                 delete_output_btn.click(
@@ -5722,7 +5840,7 @@ def create_ui():
                 confirm_trigger.change(
                     delete_output_file,
                     inputs=[confirm_trigger, output_dropdown],
-                    outputs=[output_dropdown, history_audio, history_metadata, confirm_trigger]
+                    outputs=[output_dropdown, history_audio, history_metadata]
                 )
 
                 refresh_outputs_btn.click(
@@ -5773,13 +5891,28 @@ def create_ui():
                             interactive=True
                         )
 
-                        save_trimmed_btn = gr.Button("Save Trimmed Audio")
+                        # Audio processing buttons
+                        with gr.Row():
+                            finetune_clean_btn = gr.Button("AI Denoise", size="sm", visible=DEEPFILTER_AVAILABLE)
+                            finetune_normalize_btn = gr.Button("Normalize Volume", size="sm")
+                            finetune_mono_btn = gr.Button("Convert to Mono", size="sm")
+
+                        save_trimmed_btn = gr.Button("Save Audio", size="sm", variant="primary")
 
                         gr.Markdown("### Transcription Settings")
 
+                        # Offer available transcription models
+                        available_models = ['VibeVoice ASR']
+                        if WHISPER_AVAILABLE:
+                            available_models.insert(0, 'Whisper')
+
+                        default_model = _user_config.get("transcribe_model", "Whisper")
+                        if default_model not in available_models:
+                            default_model = available_models[0]
+
                         finetune_transcribe_model = gr.Radio(
-                            choices=["Whisper", "VibeVoice ASR"],
-                            value=_user_config.get("transcribe_model", "Whisper"),
+                            choices=available_models,
+                            value=default_model,
                             label="Transcription Model",
                             info="Choose transcription engine"
                         )
@@ -5808,7 +5941,7 @@ def create_ui():
                             save_transcript_btn = gr.Button("Save Transcript", variant="primary", scale=1)
 
                         with gr.Column(scale=1):
-                            gr.Markdown("#### Batch Transcript\nTranscibes entire dataset", container=True)
+                            gr.Markdown("#### Batch Transcript\n_Transcribes entire dataset_", container=True)
                             batch_transcribe_btn = gr.Button("Batch Transcribe", variant="primary", size="lg")
                             with gr.Row():
                                 batch_replace_existing = gr.Checkbox(
@@ -5842,7 +5975,7 @@ def create_ui():
                 def refresh_folder_list():
                     """Refresh folder list."""
                     folders = get_dataset_folders()
-                    return gr.update(choices=folders, value=None)
+                    return gr.update(choices=["(Select Dataset)"] + folders, value="(Select Dataset)")
 
                 def refresh_finetune_list(folder):
                     """Refresh file list for the current folder."""
@@ -5901,7 +6034,7 @@ def create_ui():
                 confirm_trigger.change(
                     delete_dataset_item,
                     inputs=[confirm_trigger, finetune_folder_dropdown, finetune_dropdown],
-                    outputs=[finetune_status, finetune_dropdown, confirm_trigger]
+                    outputs=[finetune_status, finetune_dropdown]
                 )
 
                 auto_transcribe_btn.click(
@@ -5929,6 +6062,27 @@ def create_ui():
 
                     # Return: clear audio, status, and filename to preserve for reload
                     return None, status, filename
+
+                # Normalize
+                finetune_normalize_btn.click(
+                    normalize_audio,
+                    inputs=[finetune_audio_preview],
+                    outputs=[finetune_audio_preview]
+                )
+
+                # Convert to mono
+                finetune_mono_btn.click(
+                    convert_to_mono,
+                    inputs=[finetune_audio_preview],
+                    outputs=[finetune_audio_preview]
+                )
+
+                # Clean audio
+                finetune_clean_btn.click(
+                    clean_audio,
+                    inputs=[finetune_audio_preview],
+                    outputs=[finetune_audio_preview]
+                )
 
                 save_trimmed_event = save_trimmed_btn.click(
                     save_and_reload,

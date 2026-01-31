@@ -21,6 +21,9 @@ markdown
 # 4-bit quantization support (all platforms)
 bitsandbytes
 
+# Voice isolation and denoising
+deepfilternet
+
 # Platform-specific packages
 openai-whisper; sys_platform == 'win32'  # Windows only - Linux/macOS use VibeVoice ASR instead
 
@@ -29,6 +32,5 @@ openai-whisper; sys_platform == 'win32'  # Windows only - Linux/macOS use VibeVo
 
 # Note for Linux users:
 # - If onnxruntime fails to install, try the nightly build:
-#   pip install --pre --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ORT-Nightly/pypi/simple/ onnxruntime
 # - openai-whisper is excluded due to compatibility issues (llvmlite/numba build failures)
-# - VibeVoice ASR is used for transcription on Linux/macOS
+# - VibeVoice ASR can be used for transcription instead
