@@ -121,16 +121,19 @@ INPUT_MODAL_CSS = """
   background: var(--button-primary-background-fill-hover);
   border-color: var(--button-primary-border-color-hover);
 }
+#input-modal-overlay p.modal-message.error,
 #input-modal-overlay .modal-message.error {
-  color: #ff4444;
-  font-weight: 700;
+  color: #ff4444 !important;
+  font-weight: 700 !important;
   word-wrap: break-word;
-  animation: errorShake 0.4s ease-in-out;
+  animation: errorShake 0.25s ease-in-out;
 }
 @keyframes errorShake {
   0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-8px); }
-  75% { transform: translateX(8px); }
+  20% { transform: translateX(-12px); }
+  40% { transform: translateX(12px); }
+  60% { transform: translateX(-10px); }
+  80% { transform: translateX(8px); }
 }
 """
 
@@ -143,14 +146,14 @@ INPUT_MODAL_HEAD = """
     const overlay = document.getElementById('input-modal-overlay');
     const inputField = document.getElementById('input-modal-field');
     const errorEl = document.getElementById('input-modal-error');
-    
+
     if (!overlay || !inputField) return;
 
     let valueToSubmit = '';
-    
+
     if (action === 'submit') {
       valueToSubmit = inputField.value.trim();
-      
+
       // Run validation if provided
       if (window.inputModalValidation) {
         const error = window.inputModalValidation(valueToSubmit);
@@ -235,7 +238,7 @@ INPUT_MODAL_HEAD = """
   window.addEventListener('DOMContentLoaded', () => {
     const overlay = document.getElementById('input-modal-overlay');
     if (!overlay) return;
-    
+
     // Close on overlay click
     overlay.addEventListener('click', function(e) {
       if (e.target === this) {
@@ -255,7 +258,7 @@ INPUT_MODAL_HEAD = """
           }
         }
       });
-      
+
       // Clear error on input
       inputField.addEventListener('input', function() {
         const messageEl = document.getElementById('input-modal-message');
@@ -285,7 +288,7 @@ INPUT_MODAL_HTML = """
 <div id="input-modal-overlay">
   <div class="modal-box">
     <h3 id="input-modal-title">Enter Value</h3>
-    <p id="input-modal-message">Please enter a value:</p>
+    <p id="input-modal-message" class="modal-message">Please enter a value:</p>
     <input type="text" id="input-modal-field" placeholder="Enter text..." />
     <div class="modal-error" id="input-modal-error"></div>
     <div class="modal-actions">
@@ -315,16 +318,16 @@ def show_input_modal_js(title, message="", placeholder="Enter text...", default_
     """
     # If default_value is provided as a string literal, wrap it in quotes
     # Otherwise assume it's a Gradio variable name that will be passed
-    
+
     validation_setup = ""
     if validation_js:
         validation_setup = f"window.inputModalValidation = {validation_js};"
-    
+
     return f"""
     (defaultVal) => {{
         const overlay = document.getElementById('input-modal-overlay');
         if (!overlay) return '';
-        
+
         const titleEl = document.getElementById('input-modal-title');
         const messageEl = document.getElementById('input-modal-message');
         const inputField = document.getElementById('input-modal-field');
@@ -356,7 +359,7 @@ def show_input_modal_js(title, message="", placeholder="Enter text...", default_
         {validation_setup}
 
         overlay.classList.add('show');
-        
+
         // Focus the input field after a brief delay
         setTimeout(() => {{
             if (inputField) {{
@@ -364,7 +367,7 @@ def show_input_modal_js(title, message="", placeholder="Enter text...", default_
                 inputField.select();
             }}
         }}, 100);
-        
+
         return '';
     }}
     """

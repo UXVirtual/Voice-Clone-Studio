@@ -6269,7 +6269,6 @@ def create_ui():
                 def show_training_modal():
                     """Fetch current model list and prepare modal."""
                     existing_models = get_trained_model_names()
-                    print(f"[DEBUG] show_training_modal returning: {existing_models}")
                     return existing_models
 
                 start_training_btn.click(
@@ -6282,10 +6281,6 @@ def create_ui():
                     outputs=None,
                     js="""
                     (existingModels) => {
-                        console.log('[DEBUG] Received existingModels:', existingModels);
-                        console.log('[DEBUG] Type:', typeof existingModels);
-                        console.log('[DEBUG] Is array?', Array.isArray(existingModels));
-
                         const overlay = document.getElementById('input-modal-overlay');
                         if (!overlay) return;
 
