@@ -2651,9 +2651,14 @@ def normalize_audio(audio_file):
         temp_path = TEMP_DIR / f"normalized_{datetime.now().strftime('%H%M%S')}.wav"
         sf.write(str(temp_path), normalized, sr)
 
+        # Force file flush on Windows to prevent connection reset errors
+        if platform.system() == "Windows":
+            time.sleep(0.1)  # Small delay to ensure file is fully written
+
         return str(temp_path)
 
     except Exception as e:
+        print(f"Error normalizing audio: {e}")
         return None
 
 
