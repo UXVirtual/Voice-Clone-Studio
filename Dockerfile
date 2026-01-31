@@ -20,6 +20,7 @@ RUN apt-get update && \
         libsndfile1 \
         libsox3 \
         sox \
+        git \
         ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 

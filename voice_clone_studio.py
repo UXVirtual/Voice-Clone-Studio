@@ -2723,6 +2723,10 @@ def clean_audio(audio_file, progress=gr.Progress()):
     if audio_file is None:
         return None
 
+    if not os.path.exists(audio_file):
+        print(f"Error: Audio file not found at path: {audio_file}")
+        return audio_file # Return original path so UI doesn't break
+
     if not DEEPFILTER_AVAILABLE:
         print("DeepFilterNet not installed. Skipping cleaning.")
         return audio_file
@@ -2746,10 +2750,22 @@ def clean_audio(audio_file, progress=gr.Progress()):
 
         # Save output
         timestamp = datetime.now().strftime("%H%M%S")
-        output_path = TEMP_DIR / f"cleaned_{timestamp}.wav"
+        output_filename = f"cleaned_{timestamp}.wav"
+        output_path = TEMP_DIR / output_filename
 
-        # Save using DeepFilterNet's save function
-        save_audio(str(output_path), enhanced_audio, target_sr)
+        # Robust save with fallback for permission/system errors
+        try:
+             # Try saving to configured temp dir
+            save_audio(str(output_path), enhanced_audio, target_sr)
+        except (PermissionError, OSError, RuntimeError) as e:
+            msg = str(e)
+            if "Permission denied" in msg or "System error" in msg:
+                 import tempfile
+                 print(f"⚠ Warning: Could not write to {output_path} ({msg}). Falling back to system temp.")
+                 output_path = Path(tempfile.gettempdir()) / output_filename
+                 save_audio(str(output_path), enhanced_audio, target_sr)
+            else:
+                raise e
 
         progress(1.0, desc="Done!")
         return str(output_path)
