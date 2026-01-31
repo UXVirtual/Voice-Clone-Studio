@@ -13,6 +13,7 @@ import json
 import shutil
 import re
 import time
+import tempfile
 from textwrap import dedent
 import markdown
 import platform
@@ -1544,11 +1545,31 @@ def generate_voice_design(text_to_generate, language, instruct, seed,
 
         progress(0.8, desc=f"Saving audio ({'output' if save_to_output else 'temp'})...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Ensure audio is numpy array (move to CPU if tensor)
+        audio_data = wavs[0]
+        if hasattr(audio_data, "cpu"):
+            audio_data = audio_data.cpu().numpy()
+        elif hasattr(audio_data, "numpy"):
+            audio_data = audio_data.numpy()
+            
         if save_to_output:
             out_file = OUTPUT_DIR / f"voice_design_{timestamp}.wav"
         else:
             out_file = TEMP_DIR / f"voice_design_{timestamp}.wav"
-        sf.write(str(out_file), wavs[0], sr)
+            
+        try:
+            # Ensure directory exists just in case
+            if not out_file.parent.exists():
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(str(out_file), audio_data, sr)
+        except Exception as save_err:
+            print(f"⚠ Error saving to {out_file}: {save_err}. Trying fallback...")
+            # Fallback to system temp
+            fd, temp_path = tempfile.mkstemp(suffix=".wav", prefix=f"voice_design_{timestamp}_")
+            os.close(fd)
+            out_file = Path(temp_path)
+            sf.write(str(out_file), audio_data, sr)
 
         # User must save to samples explicitly; return file path
         progress(1.0, desc="Done!")
@@ -2429,9 +2450,23 @@ def generate_design_then_clone(design_text, design_instruct, clone_text, languag
             instruct=design_instruct.strip(),
         )
 
+        # Ensure numpy
+        audio_data = ref_wavs[0]
+        if hasattr(audio_data, "cpu"):
+             audio_data = audio_data.cpu().numpy()
+        elif hasattr(audio_data, "numpy"):
+             audio_data = audio_data.numpy()
+
         # Save the reference
         ref_file = OUTPUT_DIR / f"design_ref_{timestamp}.wav"
-        sf.write(str(ref_file), ref_wavs[0], sr)
+        try:
+            sf.write(str(ref_file), audio_data, sr)
+        except Exception as e:
+            print(f"Warning: Could not save reference to output, using temp. Error: {e}")
+            fd, temp_path = tempfile.mkstemp(suffix=f"_design_ref_{timestamp}.wav")
+            os.close(fd)
+            ref_file = Path(temp_path)
+            sf.write(str(ref_file), audio_data, sr)
 
         # Step 2: Clone the designed voice
         progress(0.5, desc="Loading Base model for cloning...")

@@ -49,6 +49,7 @@ models/*
 *.prompt
 config.json
 Qwen/
+.hf_cache/
 
 # Jupyter
 .ipynb_checkpoints/
