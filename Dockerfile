@@ -21,6 +21,7 @@ RUN apt-get update && \
         libsox3 \
         sox \
         git \
+        git-lfs \
         ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
