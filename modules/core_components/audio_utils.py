@@ -184,7 +184,7 @@ def normalize_audio(audio_file, temp_dir):
 
         try:
             sf.write(str(temp_path), normalized, sr)
-        except (PermissionError, OSError) as e:
+        except (PermissionError, OSError, RuntimeError) as e:
             # Fallback to system temp
             try:
                 print(f"[WARN] Could not write to {temp_path} ({e}). Falling back to system temp.")
