@@ -16,6 +16,7 @@ import soundfile as sf
 import shutil
 import random
 import time
+import tempfile
 from pathlib import Path
 
 from modules.core_components.tool_base import Tool, ToolConfig
@@ -324,7 +325,17 @@ class SoundEffectsTool(Tool):
                 # Compute actual duration from audio length
                 actual_duration = round(len(audio_data) / sr, 2)
 
-                sf.write(str(temp_path), audio_data, sr)
+                try:
+                    sf.write(str(temp_path), audio_data, sr)
+                except (PermissionError, OSError, RuntimeError) as e:
+                     # Fallback to system temp
+                    try:
+                        print(f"[WARN] Could not write to {temp_path} ({e}). Falling back to system temp.")
+                        temp_path = Path(tempfile.gettempdir()) / temp_filename
+                        sf.write(str(temp_path), audio_data, sr)
+                    except Exception as fbe:
+                         print(f"Fallback save failed: {fbe}")
+                         raise RuntimeError(f"Failed to save sfx to both {TEMP_DIR} and system temp. Error: {e}") from fbe
 
                 # Build metadata text
                 metadata_lines = [
@@ -354,18 +365,25 @@ class SoundEffectsTool(Tool):
                         timestamp = int(time.time())
                         combined_filename = f"sfx_preview_{safe_prompt}_{timestamp}.mp4"
                         combined_path = TEMP_DIR / combined_filename
-                        subprocess.run(
-                            ["ffmpeg", "-y",
-                             "-i", str(video),
-                             "-i", str(temp_path),
-                             "-c:v", "copy",
-                             "-c:a", "aac", "-b:a", "192k",
-                             "-map", "0:v:0", "-map", "1:a:0",
-                             "-shortest",
-                             "-loglevel", "error",
-                             str(combined_path)],
-                            check=True, timeout=60
-                        )
+                        cmd = [
+                            "ffmpeg", "-y",
+                            "-i", str(video),
+                            "-i", str(temp_path),
+                            "-c:v", "copy",
+                            "-c:a", "aac", "-b:a", "192k",
+                            "-map", "0:v:0", "-map", "1:a:0",
+                            "-shortest",
+                            "-loglevel", "error",
+                            str(combined_path)
+                        ]
+                        try:
+                            subprocess.run(cmd, check=True, timeout=60)
+                        except (subprocess.CalledProcessError, OSError) as e:
+                             print(f"Muxing to {combined_path} failed ({e}), trying system temp...")
+                             combined_path = Path(tempfile.gettempdir()) / combined_filename
+                             cmd[-1] = str(combined_path)
+                             subprocess.run(cmd, check=True, timeout=60)
+                        
                         combined_video_path = str(combined_path)
                     except Exception as mux_err:
                         print(f"Video mux failed: {mux_err}")

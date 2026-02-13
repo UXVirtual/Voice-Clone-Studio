@@ -104,6 +104,14 @@ def extract_audio_from_video(video_path, temp_dir):
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
+        # Fallback to system temp if ffmpeg failed (likely due to permissions)
+        if result.returncode != 0 and (not audio_output.exists() or audio_output.stat().st_size == 0):
+             # Try system temp
+             print(f"[WARN] ffmpeg failed in {temp_dir}. Falling back to system temp.")
+             audio_output = Path(tempfile.gettempdir()) / f"{stem}.wav"
+             cmd[-1] = str(audio_output)
+             result = subprocess.run(cmd, capture_output=True, text=True)
+
         # Clean up the local video copy if we made one
         if local_video != video_input and local_video.exists():
             try:
@@ -238,7 +246,7 @@ def convert_to_mono(audio_file, temp_dir):
 
             try:
                 sf.write(str(temp_path), mono, sr)
-            except (PermissionError, OSError) as e:
+            except (PermissionError, OSError, RuntimeError) as e:
                 # Fallback to system temp
                 print(f"[WARN] Could not write to {temp_path} ({e}). Falling back to system temp.")
                 temp_path = Path(tempfile.gettempdir()) / filename
