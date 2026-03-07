@@ -20,6 +20,10 @@ import random
 import tempfile
 import time
 import logging
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from modules.api.v1 import create_v1_router
 
 # Suppress Gradio's noisy HTTP request logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -169,7 +173,7 @@ _foley_manager = None
 # UI CREATION
 # ============================================================================
 
-def create_ui():
+def create_ui(theme=None, css=None, js=None, head=None):
     """Create the Gradio interface with modular tools."""
 
     # Initialize AI managers and make them available to wrapper functions
@@ -179,9 +183,13 @@ def create_ui():
     _foley_manager = get_foley_manager(_user_config, MODELS_DIR)
 
     # CSS to hide trigger widgets (use imported TRIGGER_HIDE_CSS)
-    custom_css = TRIGGER_HIDE_CSS
+    # If explicit CSS was passed, append it, otherwise ensure we use the hide CSS
+    if css:
+        final_css = TRIGGER_HIDE_CSS + "\n" + css
+    else:
+        final_css = TRIGGER_HIDE_CSS
 
-    with gr.Blocks(title="Voice Clone Studio") as app:
+    with gr.Blocks(title="Voice Clone Studio", theme=theme, css=final_css, js=js, head=head) as app:
         # Modal HTML
         gr.HTML(CONFIRMATION_MODAL_HTML)
         gr.HTML(INPUT_MODAL_HTML)
@@ -311,52 +319,82 @@ if __name__ == "__main__":
             radius_size="md",
         )
 
-    app = create_ui()
-
+    # Prepare UI configuration
+    app_head = CONFIRMATION_MODAL_HEAD + INPUT_MODAL_HEAD
+    app_css = CONFIRMATION_MODAL_CSS + INPUT_MODAL_CSS + "\n" + TRIGGER_HIDE_CSS
+    
     # Force dark mode JS snippet (conditional on user preference)
-    dark_mode_js = "() => { document.body.classList.add('dark'); }" if _user_config.get("dark_mode_only", True) else None
+    app_js = None
+    if _user_config.get("dark_mode_only", True):
+        app_js = "() => { document.body.classList.add('dark'); }"
 
-    try:
-        # Use 0.0.0.0 if user enabled network listening, otherwise localhost only
-        network_mode = _user_config.get("listen_on_network", False)
-        default_host = "0.0.0.0" if network_mode else "127.0.0.1"
-        server_host = os.getenv("GRADIO_SERVER_NAME", default_host)
+    # Create the Gradio app (Blocks object)
+    gradio_app = create_ui(theme=theme, css=app_css, js=app_js, head=app_head)
 
-        # In network mode, don't auto-open browser — print the LAN address instead
-        if network_mode or server_host == "0.0.0.0":
-            import socket
-            # Get actual LAN IP by checking which interface routes to external networks
-            # This never sends data — just checks which local IP the OS would use
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("10.255.255.255", 1))
-                lan_ip = s.getsockname()[0]
-                s.close()
-            except Exception:
-                lan_ip = "<your-local-ip>"
-            print()
-            print("=" * 50)
-            print("Network listening enabled")
-            print("Local:   http://127.0.0.1:7860")
-            print(f"Network: http://{lan_ip}:7860")
-            print()
-            print("NOTE: Only devices on your local network can")
-            print("connect. Your router's firewall blocks outside")
-            print("traffic unless you have port forwarding enabled.")
-            print("Do NOT use this on public/untrusted WiFi.")
-            print("=" * 50)
-            print()
+    # Enable queueing, critical for progress bars
+    gradio_app.queue()
 
-        app.launch(
-            server_name=server_host,
-            server_port=7860,
-            share=False,
-            inbrowser=not (network_mode or server_host == "0.0.0.0"),
-            theme=theme,
-            css=TRIGGER_HIDE_CSS + CONFIRMATION_MODAL_CSS + INPUT_MODAL_CSS,
-            head=CONFIRMATION_MODAL_HEAD + INPUT_MODAL_HEAD,
-            js=dark_mode_js
+    # Configure network settings
+    network_mode = _user_config.get("listen_on_network", False)
+    default_host = "0.0.0.0" if network_mode else "127.0.0.1"
+    server_host = os.getenv("GRADIO_SERVER_NAME", default_host)
+    
+    # Launch Gradio app first to initialize internal FastAPI app and apply UI settings (CSS/JS/Head)
+    # prevent_thread_lock=True returns (app, local_url, share_url)
+    app, local_url, share_url = gradio_app.launch(
+        server_name=server_host,
+        server_port=7860,
+        prevent_thread_lock=True,
+        allowed_paths=[
+            str(SAMPLES_DIR),
+            str(OUTPUT_DIR),
+            str(DATASETS_DIR),
+            str(TEMP_DIR),
+            str(MODELS_DIR),
+            str(TRAINED_MODELS_DIR)
+        ]
+    )
+
+    # Now attach API routes to the launched FastAPI app
+    if _tts_manager:
+        api_router = create_v1_router(
+            tts_manager=_tts_manager, 
+            trained_models_dir=TRAINED_MODELS_DIR, 
+            user_config=_user_config
         )
+        app.include_router(api_router)
+        print(f"API endpoints mounted at http://{server_host}:7860/v1/audio/speech")
+    else:
+        print("Warning: TTS Manager not initialized, API will not work.")
+
+    # Add CORS middleware if needed
+    # Note: app must be added to middleware before it handles requests, but launch() already started it.
+    # However, standard FastAPI include_router works fine after start.
+    # Middleware adding after start raises error in Starlette/FastAPI.
+    # We can try to add it, but if it fails, we rely on Gradio's internal CORS handling.
+    try:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    except RuntimeError:
+        pass # App already started, can't add middleware easily. Gradio usually allows CORS.
+
+    print(f"Voice Clone Studio is running on {local_url}")
+    if share_url:
+        print(f"Public URL: {share_url}")
+        
+    # Block main thread to keep server running
+    try:
+        gradio_app.block_thread()
+    except KeyboardInterrupt:
+        print("Stopping server...")
+        gradio_app.close()
+
+
     except OSError:
         print()
         print("=" * 50)
