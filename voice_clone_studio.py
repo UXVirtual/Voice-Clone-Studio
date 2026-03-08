@@ -358,9 +358,10 @@ if __name__ == "__main__":
     # Now attach API routes to the launched FastAPI app
     if _tts_manager:
         api_router = create_v1_router(
-            tts_manager=_tts_manager, 
-            trained_models_dir=TRAINED_MODELS_DIR, 
-            user_config=_user_config
+            tts_manager=_tts_manager,
+            trained_models_dir=TRAINED_MODELS_DIR,
+            user_config=_user_config,
+            samples_dir=SAMPLES_DIR
         )
         app.include_router(api_router)
         print(f"API endpoints mounted at http://{server_host}:7860/v1/audio/speech")
