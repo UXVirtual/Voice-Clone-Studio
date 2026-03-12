@@ -8,6 +8,8 @@ import logging
 from pathlib import Path
 import asyncio
 import re
+import markdown
+from html.parser import HTMLParser
 
 # Impor utils to find models
 from modules.core_components.ai_models.model_utils import get_trained_vibevoice_models
@@ -17,25 +19,57 @@ logger = logging.getLogger(__name__)
 # Global lock to ensure sequential processing
 generation_lock = asyncio.Lock()
 
+class MLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs = True
+        self.text_parts = []
+    
+    def handle_data(self, d):
+        self.text_parts.append(d)
+        
+    def handle_endtag(self, tag):
+        # Add space after block elements to prevent concatenation
+        if tag in ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'br', 'tr', 'blockquote']:
+            self.text_parts.append(' ')
+            
+    def get_data(self):
+        return "".join(self.text_parts)
+
+def strip_markdown(text: str) -> str:
+    # Convert markdown to HTML
+    try:
+        html = markdown.markdown(text)
+        # Strip HTML tags
+        s = MLStripper()
+        s.feed(html)
+        return s.get_data()
+    except Exception as e:
+        logger.warning(f"Markdown stripping failed: {e}")
+        return text
+
 def clean_input_text(text: str) -> str:
     """
-    Remove citations and artifacts from OpenWebUI or other AI outputs.
+    Remove citations, artifacts, and markdown links from OpenWebUI or other AI outputs.
     """
+    # First, strip markdown (handles links [text](url) -> text, bold, etc.)
+    text = strip_markdown(text)
+
     # Remove standard citation numbers like [1], [2], [1, 2]
+    # Note: strip_markdown might have left these alone as they aren't md links
     text = re.sub(r'\[\d+(?:,\s*\d+)*\]', '', text)
     # Remove citations with source like [Source] or [source]
     text = re.sub(r'\[[Ss]ource\]', '', text)
-    # Remove markdown link syntax but keep text: [text](http...) -> text
-    # This handles cases where citations might be links
-    # text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text) 
-    # Actually, for citations we likely want to remove the whole thing if it's a citation.
     
     # Remove patterns that look like file references in brackets e.g. [filename.pdf]
     text = re.sub(r'\[[\w\s-]+\.(?:pdf|txt|md|docx)\]', '', text, flags=re.IGNORECASE)
 
-    # Clean up extra whitespace
+    # Clean up extra whitespace introduced by stripping
     text = re.sub(r'\s+', ' ', text).strip()
     return text
+
 
 class SpeechRequest(BaseModel):
     model: str
@@ -192,7 +226,9 @@ def create_v1_router(tts_manager, trained_models_dir: Path, user_config: dict, s
                             if found: break
 
             # Clean input text of citations and artifacts
+            print(f"API Input Text (Raw): {request.input}", flush=True)
             cleaned_input = clean_input_text(request.input)
+            print(f"API Input Text (Cleaned): {cleaned_input}", flush=True)
 
             # Streaming generation is not easily supported by the current manager structure without refactoring,
             # so we generate primarily and then encode.
