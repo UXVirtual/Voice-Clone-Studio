@@ -77,6 +77,7 @@ class SpeechRequest(BaseModel):
     voice: Optional[str] = "default"
     response_format: Optional[Literal['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm']] = 'mp3'
     speed: Optional[float] = 1.0
+    stream: Optional[bool] = False
 
 def create_v1_router(tts_manager, trained_models_dir: Path, user_config: dict, samples_dir: Path = None):
     router = APIRouter()
@@ -91,12 +92,21 @@ def create_v1_router(tts_manager, trained_models_dir: Path, user_config: dict, s
         try:
             models = get_trained_vibevoice_models(trained_models_dir)
             voices = []
+            
+            # Built-in Qwen3 speakers
+            for q in ['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee']:
+                voices.append({"voice_id": q, "name": q, "category": "qwen3"})
+                
+            # Built-in VibeVoice speakers (and OpenAI fallback mappings)
+            for o in ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer', 'Carter', 'Davis', 'Emma', 'Frank', 'Grace', 'Mike', 'Samuel']:
+                voices.append({"voice_id": o, "name": o, "category": "vibevoice_stream"})
+
+            # Trained VibeVoice models
             for m in models:
                 voices.append({
                     "voice_id": m['display_name'],
                     "name": m['display_name'],
-                    # Optional metadata
-                    "category": "vibevoice", 
+                    "category": "vibevoice_trained", 
                 })
             return {"voices": voices}
         except Exception as e:
@@ -115,6 +125,11 @@ def create_v1_router(tts_manager, trained_models_dir: Path, user_config: dict, s
             import time
             current_time = int(time.time())
             
+            # Base abstract models
+            for base in ["tts-1", "tts-1-hd", "qwen3"]:
+                data.append({"id": base, "object": "model", "created": current_time, "owned_by": "voice-clone-studio"})
+            
+            # Plus trained options just in case UI expects them as 'models'
             for m in models:
                 data.append({
                     "id": m['display_name'],
@@ -130,133 +145,220 @@ def create_v1_router(tts_manager, trained_models_dir: Path, user_config: dict, s
     @router.post("/v1/audio/speech")
     async def generate_speech(request: SpeechRequest):
         try:
-            # 1. Validate Model
-            # Get available trained VibeVoice models
-            models = get_trained_vibevoice_models(trained_models_dir)
+            # 1. Route Request based on model & voice
+            vibe_streaming_voices = ['Carter', 'Davis', 'Emma', 'Frank', 'Grace', 'Mike', 'Samuel']
+            qwen_voices = ['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee']
             
-            # Find the model by name (folder name or display name)
-            selected_model = None
+            # OpenAI voice map to VibeVoice streams
+            openai_to_vibevoice = {
+                "alloy": "Samuel",
+                "echo": "Mike",
+                "fable": "Carter",
+                "onyx": "Davis",
+                "nova": "Emma",
+                "shimmer": "Grace"
+            }
             
-            # Helper to find model in list
-            def find_model(name):
-                for m in models:
-                    if m['display_name'] == name or m['path'].name == name:
-                        return m
-                return None
-
-            # Priority 1: Check if 'voice' parameter matches a known model
-            if request.voice and request.voice != "default":
-                selected_model = find_model(request.voice)
-
-            # Priority 2: Check if 'model' parameter matches a known model (fallback or if voice is generic/default)
-            if not selected_model:
-                selected_model = find_model(request.model)
+            # OpenAI voice map to Qwen3 voices
+            openai_to_qwen3 = {
+                "alloy": "Ryan",
+                "echo": "Eric",
+                "fable": "Dylan",
+                "onyx": "Uncle_Fu",
+                "nova": "Vivian",
+                "shimmer": "Serena"
+            }
             
-            if not selected_model:
-                # If model is generic OpenAI placeholder, user likely provided invalid voice
-                if request.model in ["tts-1", "tts-1-hd"]:
-                     raise HTTPException(status_code=404, detail=f"Voice '{request.voice}' not found. Available voices: {[m['display_name'] for m in models]}")
-                
-                raise HTTPException(status_code=404, detail=f"Model/Voice '{request.model}' not found. Available models: {[m['display_name'] for m in models]}")
-
-            # 2. Generate Audio
-            # We use the tts_manager to generate audio
-            # Note: generate_with_trained_vibevoice is synchronous, so it might block the event loop.
-            # In a production app, run this in a threadpool. For this plan, we run distinct.
+            req_model = request.model or ""
+            req_voice = request.voice or "default"
+            req_voice_lower = req_voice.lower()
             
-            model_path = selected_model['path']
-            print(f"API Request: Generating for voice {selected_model['display_name']} (model: {request.model})")
-
-            # Search for best matching sample in samples_dir (Only for HD model)
-            voice_sample_path = None
-            if request.model == "tts-1-hd" and samples_dir and samples_dir.exists():
-                speaker_name = selected_model.get('speaker_name', '')
-                display_name = selected_model.get('display_name', '')
-                
-                # Targets to match against (speaker name first, then full display name)
-                # Filter out empty strings
-                targets = [t for t in [speaker_name, display_name] if t]
-                
-                if targets:
-                    # Get all audio files
-                    all_samples = list(samples_dir.glob("*"))
-                    audio_samples = [f for f in all_samples if f.suffix.lower() in ['.wav', '.mp3', '.flac', '.ogg']]
-                    
-                    found = False
-                    # Strategy 1: Exact match on stem
-                    for target in targets:
-                        for f in audio_samples:
-                            if f.stem.lower() == target.lower():
-                                voice_sample_path = f
-                                print(f"API: Found exact sample match for '{target}': {f.name}")
-                                found = True
-                                break
-                        if found: break
-                    
-                    # Strategy 2: Starts with (e.g. Jessie_01.wav for Jessie)
-                    if not found:
-                        for target in targets:
-                            for f in audio_samples:
-                                if f.stem.lower().startswith(target.lower() + "_") or f.stem.lower().startswith(target.lower() + "-"):
-                                    voice_sample_path = f
-                                    print(f"API: Found prefix sample match for '{target}': {f.name}")
-                                    found = True
-                                    break
-                            if found: break
-
-                    # Strategy 3: Partial containment (e.g. Jessie in Jessie-VibeVoice)
-                    if not found:
-                        for target in targets:
-                            # Skip very short targets to avoid false matches
-                            if len(target) < 3: continue
-                            
-                            for f in audio_samples:
-                                # Check if sample name is in target (e.g. Jessie.wav in Jessie-VibeVoice)
-                                if f.stem.lower() in target.lower():
-                                    voice_sample_path = f
-                                    print(f"API: Found substring sample match (sample in target) for '{target}': {f.name}")
-                                    found = True
-                                    break
-                                # Check if target is in sample name (e.g. Jessie in Best_Jessie_Sample.wav)
-                                if target.lower() in f.stem.lower():
-                                    voice_sample_path = f
-                                    print(f"API: Found substring sample match (target in sample) for '{target}': {f.name}")
-                                    found = True
-                                    break
-                            if found: break
+            generation_mode = None
+            selected_trained_model = None
+            
+            # Check for trained VibeVoice model first if specific request made
+            trained_models = get_trained_vibevoice_models(trained_models_dir)
+            for m in trained_models:
+                if m.get('display_name') == req_voice or m.get('display_name') == req_model or Path(m.get('path', '')).name == req_voice:
+                    selected_trained_model = m
+                    generation_mode = "trained_vibevoice"
+                    break
+            
+            if not generation_mode:
+                if req_model in ["qwen3", "tts-1-hd"]:
+                    generation_mode = "qwen3"
+                elif req_model == "tts-1" or req_voice_lower in openai_to_vibevoice or req_voice in vibe_streaming_voices:
+                    generation_mode = "vibevoice_stream"
+                else:
+                    raise HTTPException(status_code=404, detail=f"Model/Voice '{req_voice}' not found.")
 
             # Clean input text of citations and artifacts
             print(f"API Input Text (Raw): {request.input}", flush=True)
             cleaned_input = clean_input_text(request.input)
             print(f"API Input Text (Cleaned): {cleaned_input}", flush=True)
 
-            # Streaming generation is not easily supported by the current manager structure without refactoring,
-            # so we generate primarily and then encode.
-            
-            gen_kwargs = {
-                "text": cleaned_input,
-                "language": "en", # Default to English for now, or infer/add param
-                "checkpoint_path": model_path,
-                "temperature": 0.7, # Default decent parameters
-                "do_sample": True,
-                "user_config": user_config
-            }
-            
-            if voice_sample_path:
-                gen_kwargs['voice_sample_path'] = str(voice_sample_path)
-            
-            # Queue execution to prevent VRAM overlap
-            queue_position = 0 if not generation_lock.locked() else 1 # Rough estimate
+            if request.stream and generation_mode == "vibevoice_stream":
+                from fastapi.responses import StreamingResponse
+                
+                async def stream_generator():
+                    # Wait for lock inside the generator so the request stays alive
+                    if generation_lock.locked():
+                        print(f"API: GPU busy. Request from {request.model} entered queue.")
+                        
+                    async with generation_lock:
+                        from modules.vibevoice_tts.modular.streamer import AsyncAudioStreamer
+                        streamer = AsyncAudioStreamer(batch_size=1)
+                        
+                        target_speaker = openai_to_vibevoice.get(req_voice_lower, req_voice)
+                        if target_speaker not in vibe_streaming_voices:
+                            target_speaker = "Samuel"
+
+                        print(f"API: Streaming VibeVoice record: {target_speaker}")
+                        
+                        task = asyncio.create_task(
+                            asyncio.to_thread(
+                                tts_manager.generate_vibevoice_streaming,
+                                text=cleaned_input,
+                                voice_name=target_speaker,
+                                audio_streamer=streamer
+                            )
+                        )
+                        
+                        if request.response_format != 'pcm':
+                            import wave, io
+                            buffer = io.BytesIO()
+                            with wave.open(buffer, 'wb') as wav_file:
+                                wav_file.setnchannels(1)
+                                wav_file.setsampwidth(2)
+                                wav_file.setframerate(24000)
+                                wav_file.setnframes(0xFFFFFFF) # Fake large
+                            yield buffer.getvalue()
+                            
+                        try:
+                            async for chunk in streamer.get_stream(0):
+                                if chunk is None: break
+                                if hasattr(chunk, 'cpu'): chunk = chunk.cpu().numpy()
+                                chunk = chunk.squeeze()
+                                if chunk.ndim > 1:
+                                    chunk = chunk[0]
+                                audio_int16 = (chunk * 32767).astype(np.int16)
+                                yield audio_int16.tobytes()
+                        except Exception as e:
+                            print(f"Streaming error: {e}")
+                        finally:
+                            await task
+                            
+                return StreamingResponse(
+                    stream_generator(),
+                    media_type="audio/wav" if request.response_format != 'pcm' else "application/octet-stream"
+                )
+
             if generation_lock.locked():
                 print(f"API: GPU busy. Request from {request.model} entered queue.")
             
             async with generation_lock:
-                print(f"API: Processing generation for {request.model}...")
-                # Run synchronous generation in a thread to unblock the event loop (so pings/health checks work)
-                audio_data, sample_rate = await asyncio.to_thread(tts_manager.generate_with_trained_vibevoice, **gen_kwargs)
-                print(f"API: Generation complete for {request.model}.")
+                print(f"API: Processing [{generation_mode}] generation for {request.model} with voice {request.voice}...")
+                audio_data, sample_rate = None, None
+
+                if generation_mode == "qwen3":
+                    # Map standard OpenAI voices if used
+                    target_speaker = openai_to_qwen3.get(req_voice_lower, req_voice)
+                    
+                    # Match target speaker case-insensitively
+                    matched = False
+                    for q in qwen_voices:
+                        if q.lower() == target_speaker.lower():
+                            target_speaker = q
+                            matched = True
+                            break
+                            
+                    if not matched:
+                        target_speaker = "Ryan" # Safe fallback
+                        
+                    print(f"API: Generating Qwen3 voice: {target_speaker}")
+                    audio_data, sample_rate = await asyncio.to_thread(
+                        tts_manager.generate_custom_voice,
+                        text=cleaned_input,
+                        language="english",
+                        speaker=target_speaker
+                    )
+
+                elif generation_mode == "vibevoice_stream":
+                    target_speaker = openai_to_vibevoice.get(req_voice_lower, req_voice)
+                    if target_speaker not in vibe_streaming_voices:
+                        target_speaker = "Samuel" # Safe fallback
+                    
+                    print(f"API: Generating VibeVoice Streaming voice: {target_speaker}")
+                    audio_data, sample_rate = await asyncio.to_thread(
+                        tts_manager.generate_vibevoice_streaming,
+                        text=cleaned_input,
+                        voice_name=target_speaker
+                    )
+
+                elif generation_mode == "trained_vibevoice":
+                    model_path = selected_trained_model['path']
+                    print(f"API: Generating Trained VibeVoice: {selected_trained_model['display_name']}")
+                    
+                    # Search for best matching sample in samples_dir (Only for HD model)
+                    voice_sample_path = None
+                    if request.model == "tts-1-hd" and samples_dir and samples_dir.exists():
+                        speaker_name = selected_trained_model.get('speaker_name', '')
+                        display_name = selected_trained_model.get('display_name', '')
+                        targets = [t for t in [speaker_name, display_name] if t]
+                        
+                        if targets:
+                            all_samples = list(samples_dir.glob("*"))
+                            audio_samples = [f for f in all_samples if f.suffix.lower() in ['.wav', '.mp3', '.flac', '.ogg']]
+                            found = False
+                            for target in targets:
+                                for f in audio_samples:
+                                    if f.stem.lower() == target.lower():
+                                        voice_sample_path = f
+                                        found = True; break
+                                if found: break
+                                
+                            if not found:
+                                for target in targets:
+                                    for f in audio_samples:
+                                        if f.stem.lower().startswith(target.lower() + "_") or f.stem.lower().startswith(target.lower() + "-"):
+                                            voice_sample_path = f
+                                            found = True; break
+                                    if found: break
+                                    
+                            if not found:
+                                for target in targets:
+                                    if len(target) < 3: continue
+                                    for f in audio_samples:
+                                        if f.stem.lower() in target.lower() or target.lower() in f.stem.lower():
+                                            voice_sample_path = f
+                                            found = True; break
+                                    if found: break
+                    
+                    gen_kwargs = {
+                        "text": cleaned_input,
+                        "language": "en",
+                        "checkpoint_path": model_path,
+                        "temperature": 0.7,
+                        "do_sample": True,
+                        "user_config": user_config
+                    }
+                    if voice_sample_path:
+                        gen_kwargs['voice_sample_path'] = str(voice_sample_path)
+                        print(f"API: Conditional sample found: {voice_sample_path.name}")
+                        
+                    audio_data, sample_rate = await asyncio.to_thread(
+                        tts_manager.generate_with_trained_vibevoice,
+                        **gen_kwargs
+                    )
 
             # 3. Convert to requested format
+            if isinstance(audio_data, np.ndarray):
+                if audio_data.dtype != np.float32:
+                    audio_data = audio_data.astype(np.float32)
+                audio_data = audio_data.squeeze()
+                if audio_data.ndim > 1:
+                    audio_data = audio_data[0]
+
             buffer = io.BytesIO()
             format_mapping = {
                 'wav': 'WAV',

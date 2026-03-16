@@ -917,7 +917,7 @@ class TTSManager:
         return audio_data, sr
 
     def generate_vibevoice_streaming(self, text, voice_name, cfg_scale=1.5,
-                                     ddpm_steps=20, seed=-1):
+                                     ddpm_steps=20, seed=-1, audio_streamer=None):
         """
         Generate audio using VibeVoice Streaming 0.5B with baked-in voices.
 
@@ -974,9 +974,13 @@ class TTSManager:
                 cfg_scale=cfg_scale,
                 ddpm_steps=ddpm_steps,
                 all_prefilled_outputs=copy.deepcopy(cached_prompt),
+                audio_streamer=audio_streamer,
             )
         gen_time = time.time() - gen_start
         print(f"Generation complete in {gen_time:.1f}s")
+        
+        if audio_streamer is not None:
+            return None, 24000
 
         # Extract audio from generation output
         print("Decoding audio...")

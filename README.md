@@ -439,9 +439,52 @@ Voice Clone Studio provides an OpenAI-compatible API endpoint that can be used d
 
 1. In OpenWebUI, go to **Settings** > **Audio**.
 2. Under the **Text-to-Speech Settings** section, change the TTS Engine to **OpenAI**.
-3. Set the **API Base URL** to `https://host.docker.internal:7860/v1` (or your local URL if running outside Docker).
+3. Set the **API Base URL** to `http://host.docker.internal:7860/v1` (or your local URL if running outside Docker).
 4. Enter any dummy value for the **API Key** (e.g., `sk-1234`), as authentication is not required for local use.
-5. Save your settings. You can now select your Voice Clone Studio voices within OpenWebUI.
+
+#### Model Configuration
+
+You can control which engine and voice are used by configuring the **TTS Model** and **TTS Voice** fields in OpenWebUI:
+
+- **For VibeVoice Models**:
+  - **TTS Model**: Use `tts-1` (uses the VibeVoice 0.5B streaming model). To use your trained VibeVoice LoRA models (with automatic matching voice sample inclusion), specify your trained model name as the **TTS Voice**.
+  - **TTS Voice**: Set to the exact name of your trained VibeVoice model directory or its display name (e.g., `MyCustomVoice`).
+
+- **For Qwen3 Models**:
+  - **TTS Model**: Use `tts-1-hd` or `qwen3`.
+  - **TTS Voice**: Set to your custom voice sample name, or one of the built-in Qwen3 speakers (e.g., `Vivian`, `Serena`, `Uncle_Fu`, `Dylan`, `Eric`, `Ryan`, `Aiden`, `Ono_Anna`, `Sohee`).
+
+##### Supported Default Voices & Hardware Mapping
+If you use out-of-the-box OpenAI voice names (like `alloy`), the API will automatically route your request based on the selected `TTS Model`:
+
+| Selected Voice | `tts-1` (VibeVoice 0.5b) | `qwen3` / `tts-1-hd` built-in speakers |
+|----------------|--------------------------|----------------------------------------|
+| `alloy`        | Samuel                   | Ryan                                   |
+| `echo`         | Mike                     | Eric                                   |
+| `fable`        | Carter                   | Dylan                                  |
+| `onyx`         | Davis                    | Uncle_Fu                               |
+| `nova`         | Emma                     | Vivian                                 |
+| `shimmer`      | Grace                    | Serena                                 |
+| `Vivian`       | None                     | Vivian                                 |
+| `Serena`       | None                     | Serena                                 |
+| `Uncle_Fu`     | None                     | Uncle_Fu                               |
+| `Dylan`        | None                     | Dylan                                  |
+| `Eric`         | None                     | Eric                                   |
+| `Ryan`         | None                     | Ryan                                   |
+| `Aiden`        | None                     | Aiden                                  |
+| `Ono_Anna`     | None                     | Ono_Anna                               |
+| `Sohee`        | None                     | Sohee                                  |
+| `Carter`       | Carter                   | None                                   |
+| `Davis`        | Davis                    | None                                   |
+| `Emma`         | Emma                     | None                                   |
+| `Frank`        | Frank                    | None                                   |
+| `Grace`        | Grace                    | None                                   |
+| `Mike`         | Mike                     | None                                   |
+| `Samuel`       | Samuel                   | None                                   |
+
+For `tts-1` you can also use the exact name of any model listed in the **VibeVoice Trained Model** dropdown.
+
+5. Save your settings. You can now use Voice Clone Studio as your Text-to-Speech provider within OpenWebUI.
 
 ## Project Structure
 
