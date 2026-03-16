@@ -3,6 +3,10 @@ services:
     build:
       context: .
       target: runtime
+    shm_size: '15gb'
+    ulimits:
+      memlock: -1
+      stack: 67108864
     ports:
       - "7860:7860"
     environment:
@@ -11,9 +15,14 @@ services:
       - "NVIDIA_VISIBLE_DEVICES=all"
       - "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
     volumes:
+      # Code mounts for hot reloading/debugging without rebuilds
+      - "./voice_clone_studio.py:/home/user/app/voice_clone_studio.py"
+      - "./modules:/home/user/app/modules"
+      # Data mounts
       - "./temp:/home/user/app/temp"
       - "./datasets:/home/user/app/datasets"
       - "./models:/home/user/app/models"
+      - "./trained_models:/home/user/app/trained_models"
       - "./samples:/home/user/app/samples"
       - "./output:/home/user/app/output"
       - "${HF_CACHE_HOST_PATH:-./.hf_cache}:${HF_CACHE_CONTAINER_PATH:-/home/user/app/.cache/huggingface}"

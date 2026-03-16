@@ -433,6 +433,16 @@ The UI will open at `http://127.0.0.1:7860`
 3. Describe the voice (e.g., "Young female, warm and friendly, slight British accent")
 4. Click Generate
 
+### OpenWebUI Integration
+
+Voice Clone Studio provides an OpenAI-compatible API endpoint that can be used directly as a Text-to-Speech Engine in OpenWebUI.
+
+1. In OpenWebUI, go to **Settings** > **Audio**.
+2. Under the **Text-to-Speech Settings** section, change the TTS Engine to **OpenAI**.
+3. Set the **API Base URL** to `https://host.docker.internal:7860/v1` (or your local URL if running outside Docker).
+4. Enter any dummy value for the **API Key** (e.g., `sk-1234`), as authentication is not required for local use.
+5. Save your settings. You can now select your Voice Clone Studio voices within OpenWebUI.
+
 ## Project Structure
 
 ```
